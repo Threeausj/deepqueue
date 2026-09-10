@@ -18,6 +18,7 @@ class CodexFixture:
         self.replies = {}
         self.tasks = set()
         self.terminals = {}
+        self.namespace_failure = False
         self.skills = []
         self.plugins = []
         self.profiles = [
@@ -168,6 +169,33 @@ class CodexFixture:
                 elif method == "plugin/list":
                     result = {"marketplaces": [{"name": "fixture", "plugins": self.plugins}]}
                 elif method == "command/exec":
+                    if (
+                        self.namespace_failure
+                        and p.get("sandboxPolicy", {}).get("type") != "dangerFullAccess"
+                    ):
+                        failure = "bwrap: No permissions to create new namespace\r\n"
+                        await self.emit(
+                            "command/exec/outputDelta",
+                            {
+                                "processId": p["processId"],
+                                "stream": "stderr",
+                                "deltaBase64": base64.b64encode(failure.encode()).decode(),
+                                "capReached": False,
+                            },
+                        )
+                        await socket.send(
+                            json.dumps(
+                                {
+                                    "id": message["id"],
+                                    "result": {
+                                        "exitCode": 1,
+                                        "stdout": "",
+                                        "stderr": failure,
+                                    },
+                                }
+                            )
+                        )
+                        continue
                     self.terminals[p["processId"]] = (socket, message["id"])
                     await self.emit(
                         "command/exec/outputDelta",

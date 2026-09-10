@@ -16,6 +16,7 @@ from deepqueue.workspace import (
     ExtensionChoice,
     FileAccess,
     TerminalInput,
+    TerminalRecovery,
     TerminalResize,
     TerminalSize,
 )
@@ -270,3 +271,44 @@ def test_ssh_project_file_listing_and_utf8_preview(db, ssh_server, monkeypatch):
         assert access.read(str(project), "metrics.md")["text"] == "# 远端精度\n0.93"
     finally:
         access.close()
+
+
+async def test_namespace_failure_requires_explicit_single_terminal_recovery(db, tmp_path):
+    from pydantic import ValidationError
+
+    async with fixture_gateway(db, tmp_path) as (gateway, fixture):
+        fixture.namespace_failure = True
+        session = await gateway.session("local")
+        await session.connect()
+        before = deepcopy(fixture.threads["fixture-task"])
+        failed = await session.tools.start_terminal("fixture-task", TerminalSize())
+        await session.tools.terminals["fixture-task"]["task"]
+        state = session.tools.terminal_status("fixture-task")
+        assert state["state"] == "exited" and state["recovery_available"]
+        assert "用户命名空间" in state["error"]
+        assert len(calls(fixture, "command/exec")) == 1  # No automatic escalation.
+        with pytest.raises(ValidationError):
+            TerminalRecovery(id=failed["id"])
+        with pytest.raises(ValidationError):
+            TerminalRecovery(id=failed["id"], allow_server_access=False)
+        stale = TerminalRecovery(id="stale-terminal", allow_server_access=True)
+        with pytest.raises(HTTPException, match="已变化"):
+            await session.tools.start_terminal("fixture-task", stale, recovery=stale)
+        choice = TerminalRecovery(id=failed["id"], allow_server_access=True)
+        events = asyncio.Queue()
+        session.subscribers.add(events)
+        recovered = await session.tools.start_terminal("fixture-task", choice, recovery=choice)
+        await notification(events, "deepqueue/terminal/output")
+        assert recovered["execution_mode"] == "server"
+        assert calls(fixture, "command/exec")[-1]["sandboxPolicy"] == {"type": "dangerFullAccess"}
+        assert fixture.threads["fixture-task"] == before
+        assert not calls(fixture, "thread/settings/update")
+        assert not calls(fixture, "turn/start")
+        with pytest.raises(HTTPException):
+            await session.tools.start_terminal("fixture-task", choice, recovery=choice)
+        await session.tools.stop_terminal("fixture-task", recovered["id"])
+        await session.tools.terminals["fixture-task"]["task"]
+        await session.tools.start_terminal("fixture-task", TerminalSize())
+        await session.tools.terminals["fixture-task"]["task"]
+        assert calls(fixture, "command/exec")[-1]["sandboxPolicy"] == before["sandbox"]
+        assert fixture.threads["fixture-task"] == before

@@ -190,6 +190,29 @@ def test_gateway_requires_admin_and_same_origin_including_event_stream(db):
             )
         headers = {"Authorization": "Bearer " + admin["token"], "X-DeepQueue": "1"}
         assert client.get(base, headers=headers).status_code == 200
+        recovery = base + "/threads/failed-task/terminal/recover"
+        choice = {"id": "failed-terminal", "allow_server_access": True}
+        assert client.post(recovery, json=choice, headers={"X-DeepQueue": "1"}).status_code == 401
+        assert (
+            client.post(
+                recovery,
+                json=choice,
+                headers={"Authorization": "Bearer " + scoped["token"], "X-DeepQueue": "1"},
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                recovery, json=choice, headers={**headers, "Origin": "https://evil.test"}
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                recovery, json=choice, headers={"Authorization": headers["Authorization"]}
+            ).status_code
+            == 403
+        )
         assert (
             client.post(
                 base + "/connect", json={}, headers={**headers, "Origin": "https://evil.test"}

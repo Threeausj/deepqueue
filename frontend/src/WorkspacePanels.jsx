@@ -33,6 +33,9 @@ function InteractiveTerminal({ endpoint, base, threadId, visible, ready }) {
   const live = useRef(true);
   const syncing = useRef(false);
   const [state, setState] = useState("closed");
+  const [recovery, setRecovery] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [executionMode, setExecutionMode] = useState("session");
   const [error, setError] = useState("");
   async function sync(start = false) {
     if (syncing.current || !ready) return;
@@ -56,6 +59,8 @@ function InteractiveTerminal({ endpoint, base, threadId, visible, ready }) {
         );
       current.current = row;
       setState(row.state);
+      setRecovery(row.recovery_available || false);
+      setExecutionMode(row.execution_mode || "session");
       setError(row.error || "");
     } catch (error) {
       if (live.current) setError(error.message);
@@ -144,6 +149,8 @@ function InteractiveTerminal({ endpoint, base, threadId, visible, ready }) {
       if (method === "deepqueue/terminal") {
         current.current = { ...current.current, state: p.state };
         setState(p.state);
+        setRecovery(p.recovery_available || false);
+        setExecutionMode(p.execution_mode || "session");
         setError(p.error || "");
       }
       if (method === "deepqueue/terminal/output") {
@@ -169,7 +176,8 @@ function InteractiveTerminal({ endpoint, base, threadId, visible, ready }) {
             {
               closed: "终端",
               starting: "正在启动终端…",
-              running: "交互终端",
+              running:
+                executionMode === "server" ? "服务器账户终端" : "交互终端",
               exited: "终端已退出",
               error: "终端连接失败",
             }[state]
@@ -205,6 +213,35 @@ function InteractiveTerminal({ endpoint, base, threadId, visible, ready }) {
           {error}
         </p>
       )}
+      {recovery && (
+        <div className="workspace-terminal-recovery">
+          <p>
+            仅本次终端可改为使用服务器登录账户的完整文件与网络权限，对话 agent
+            的权限不会改变。
+          </p>
+          <button
+            type="button"
+            className="button"
+            disabled={!ready || recovering}
+            onClick={async () => {
+              setRecovering(true);
+              try {
+                await api(`${endpoint}/terminal/recover`, {
+                  id: current.current.id,
+                  allow_server_access: true,
+                });
+                await sync();
+              } catch (error) {
+                setError(error.message);
+              } finally {
+                if (live.current) setRecovering(false);
+              }
+            }}
+          >
+            {recovering ? "正在重新打开…" : "仅本次以服务器账户重新打开"}
+          </button>
+        </div>
+      )}
       <div
         className="workspace-terminal-screen"
         ref={root}
@@ -214,8 +251,16 @@ function InteractiveTerminal({ endpoint, base, threadId, visible, ready }) {
   );
 }
 
-function FilePreview({ file }) {
+function FilePreview({ file, line }) {
   const [url, setUrl] = useState("");
+  const code = useRef(null);
+  useEffect(() => {
+    if (code.current && line) {
+      const height =
+        parseFloat(getComputedStyle(code.current).lineHeight) || 20;
+      code.current.scrollTop = Math.max(0, line - 3) * height;
+    }
+  }, [file, line]);
   useEffect(() => {
     if (!file) return;
     const url = URL.createObjectURL(
@@ -236,7 +281,10 @@ function FilePreview({ file }) {
     <div className="workspace-file-preview">
       <div className="workspace-file-name" title={file.path}>
         {file.name}
-        <small>{(file.size / 1024).toFixed(1)} KiB</small>
+        <small>
+          {line ? `第 ${line} 行 · ` : ""}
+          {(file.size / 1024).toFixed(1)} KiB
+        </small>
       </div>
       {file.mime.startsWith("image/") ? (
         <div className="workspace-image">
@@ -259,7 +307,7 @@ function FilePreview({ file }) {
           sandbox="allow-scripts"
         />
       ) : file.text !== null ? (
-        <pre className="workspace-code">
+        <pre className="workspace-code" ref={code}>
           <code>{file.text}</code>
         </pre>
       ) : (
@@ -408,6 +456,7 @@ export default function WorkspacePanels({
   ready,
   open,
   tab,
+  previewRequest,
   onTab,
   onClose,
   onResize,
@@ -416,17 +465,24 @@ export default function WorkspacePanels({
   const [folder, setFolder] = useState(null);
   const [path, setPath] = useState("");
   const [file, setFile] = useState(null);
+  const [fileLine, setFileLine] = useState(null);
   const [mode, setMode] = useState("web");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const flight = useRef(null);
   useEffect(() => () => flight.current?.abort(), []);
-  async function read(path, directory = true) {
+  async function read(path, directory = true, line = null) {
     flight.current?.abort();
     const controller = new AbortController();
     flight.current = controller;
     setLoading(true);
     setError("");
+    if (!directory) {
+      setFile(null);
+      setFileLine(line);
+      setMode("file");
+      onTab("preview");
+    }
     try {
       const result = await api(
         `${endpoint}/${directory ? "files" : "file"}?${new URLSearchParams({ path })}`,
@@ -451,6 +507,16 @@ export default function WorkspacePanels({
   useEffect(() => {
     if (open && tab === "files" && ready && !folder) read("");
   }, [open, tab, ready]);
+  useEffect(() => {
+    if (!previewRequest || !ready) return;
+    setMode("file");
+    if (previewRequest.error) {
+      flight.current?.abort();
+      setLoading(false);
+      setFile(null);
+      setError(previewRequest.error);
+    } else read(previewRequest.path, false, previewRequest.line);
+  }, [previewRequest, ready]);
   return (
     <aside
       className="workspace-tools"
@@ -489,6 +555,17 @@ export default function WorkspacePanels({
       <div className="workspace-root-path" title={thread.cwd}>
         {thread.cwd}
       </div>
+      {loading && (
+        <p className="workspace-tool-error">
+          <LoaderCircle className="spinning" size={14} />
+          正在读取…
+        </p>
+      )}
+      {error && (
+        <p className="error-text workspace-tool-error" role="alert">
+          {error}
+        </p>
+      )}
       <InteractiveTerminal
         {...{ endpoint, base, ready }}
         threadId={thread.id}
@@ -510,17 +587,6 @@ export default function WorkspacePanels({
             onClick={() => read(path)}
           />
         </div>
-        {loading && (
-          <p className="workspace-tool-error">
-            <LoaderCircle className="spinning" size={14} />
-            正在读取…
-          </p>
-        )}
-        {error && (
-          <p className="error-text workspace-tool-error" role="alert">
-            {error}
-          </p>
-        )}
         <ul aria-label="项目文件列表">
           {folder?.entries.map((entry) => (
             <li key={entry.path}>
@@ -563,7 +629,7 @@ export default function WorkspacePanels({
             网页服务
           </button>
         </div>
-        {mode === "file" && <FilePreview file={file} />}
+        {mode === "file" && <FilePreview file={file} line={fileLine} />}
         <WebPreview
           {...{ endpoint, ready }}
           visible={mode === "web" && open && tab === "preview"}

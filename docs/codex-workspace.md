@@ -144,7 +144,11 @@ deepqueue --url https://queue.example.com codex disconnect gpu-a
 
 终端是当前任务工作目录中的真实交互式 Bash PTY，使用原生 `command/exec` 的输入、输出事件、窗口缩放和终止接口，启动时沿用任务的有效沙盒权限。每台服务器最多同时打开 6 个终端，每个保留最近 128 KiB 输出。收起面板或切换任务后进程仍在；重新打开可恢复输出。点击关闭终端、断开服务器连接或停止网页网关会结束这些交互终端。长期训练请继续通过队列和 tmux 运行。
 
+如果终端因 `bwrap: No permissions to create new namespace` 退出，表示服务器环境禁止创建沙盒所需的用户命名空间。网页会展示原因与「仅本次以服务器账户重新打开」按钮；点击后，仅这个手动终端获得服务器登录账户的完整文件和网络权限，当前 Codex 任务的权限保持不变。恢复需明确确认并匹配刚刚失败的终端 ID，不会自动重试或保存为默认设置。关闭后重新打开仍沿用任务沙盒。
+
 文件面板使用本地文件系统或该服务器 SSH 账户的 SFTP，限定在任务的实际项目目录内，并检查符号链接解析结果。可浏览子目录，预览 UTF-8 代码/文本、Markdown、图片、PDF 和 HTML；单文件上限 8 MiB，单目录最多显示 2000 项，超出时可使用终端查看。文件面板是管理员工具，使用服务器账户读取权限；不会调用模型读取或修改文件。HTML 文件在隔离框架中显示；需要加载项目资源、运行脚本或访问后端接口时，启动项目网页服务并使用「网页服务」预览。
+
+对话回复中的文件链接、图片引用以及「文件变更」里的路径可以点击打开右侧文件预览，面板已收起时会自动展开。支持项目相对路径、服务器绝对路径、`file://` 路径，以及 `:行号`、`#L行号` 标记；代码和文本预览可定位到指定行。文件始终从当前任务所属服务器读取，项目目录之外的文件或已删除文件会显示具体错误，网页链接仍在新标签页打开。
 
 ### 网页服务预览与部署
 
@@ -197,12 +201,13 @@ server {
 | `GET /files?path=relative/dir` | 项目目录；空 path 为根目录 |
 | `GET /file?path=relative/file` | 文本、MIME 类型和 base64 文件内容 |
 | `GET /terminal`、`POST /terminal` | 终端状态 / 启动，可传 `cols`、`rows` |
+| `POST /terminal/recover` | `{ "id": "失败终端 ID", "allow_server_access": true }`，仅允许恢复已识别的命名空间失败；可传 `cols`、`rows` |
 | `POST /terminal/input` | `{ "id": "终端 ID", "data": "文本或控制字符" }` |
 | `POST /terminal/resize` | `{ "id": "终端 ID", "cols": 100, "rows": 28 }` |
 | `POST /terminal/stop` | `{ "id": "终端 ID", "data": "" }` |
 | `POST /preview` | `{ "port": 5173 }`，返回临时 URL、ID 和有效期 |
 | `POST /preview/renew`、`POST /preview/close` | `{ "id": "预览 ID" }` |
 
-`tests/test_workspace_tools.py` 覆盖缓存合并与失效、原生 skill 输入、PTY 和真实 SFTP；`tests/test_preview.py` 验证真实 HTTP/WebSocket 服务经本机和 SSH 的转发，以及鉴权、域名和关闭行为。`frontend/tests/codex-workspace.spec.js` 覆盖任务缓存切换、Slash、终端、文件、预览、折叠、缩放和移动布局。
+`tests/test_workspace_tools.py` 覆盖缓存合并与失效、原生 skill 输入、PTY 和真实 SFTP；`tests/test_preview.py` 验证真实 HTTP/WebSocket 服务经本机和 SSH 的转发，以及鉴权、域名和关闭行为。`frontend/tests/codex-workspace.spec.js` 覆盖任务缓存切换、Slash、终端、文件、预览、折叠、缩放和移动布局。`frontend/tests/codex-files.spec.js` 验证对话文件、行号与目录边界，以及需明确确认且不改变任务权限的单次终端恢复。
 
-`uv run python scripts/workspace_smoke.py --home /tmp/NEW-WORKSPACE-CHECK` 使用真实 Luna 验证原生 skill、缓存、文件和 PTY，随后归档隔离测试任务。默认 PTY 为只读沙盒；运行环境不支持 Linux 用户命名空间时，可在明确允许测试 shell 的环境下显式指定 `--terminal-permissions :danger-full-access`。该选项只调整新建测试任务，在测试后恢复只读，不是产品的自动降级行为。
+`uv run python scripts/workspace_smoke.py --home /tmp/NEW-WORKSPACE-CHECK` 使用真实 Luna 验证原生 skill、缓存、文件和 PTY，随后归档隔离测试任务。默认 PTY 为只读沙盒；运行环境不支持 Linux 用户命名空间时，可在明确允许测试 shell 的环境下显式指定 `--recover-terminal`，验证已失败终端的一次服务器账户恢复。测试只执行输出标记、调整终端尺寸和关闭操作，不启动训练；新建测试任务全程保持只读权限。

@@ -205,6 +205,12 @@ def workspace_fixture():
     return {**add_workspace(fixture, home / "workspace-project"), "port": app.state.preview_port}
 
 
+@app.post("/api/fixture/namespace-failure")
+def namespace_failure(enabled: bool = True):
+    fixture.namespace_failure = enabled
+    return {"ok": True}
+
+
 @app.get("/api/fixture/codex-calls")
 def fixture_calls():
     return fixture.calls

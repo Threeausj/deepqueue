@@ -62,6 +62,32 @@ def add_workspace(fixture, root):
                 "items": [{"id": "cached-answer", "type": "agentMessage", "text": text}],
             }
         ]
+    fixture.threads["workspace-tools"]["turns"][0]["items"].extend(
+        [
+            {
+                "id": "file-links",
+                "type": "agentMessage",
+                "text": (
+                    f"[项目说明](<{root}/README.md:2>) · [训练代码](notes/train.py#L2) · "
+                    f"[HTML 报告](<file://{root}/page.html>) · [不存在的文件](missing.md) · "
+                    "[外部文件](/etc/passwd) · [外部网页](https://example.com/docs)\n\n"
+                    f"![精度图表](<{root}/chart.svg>)"
+                ),
+            },
+            {
+                "id": "changed-file",
+                "type": "fileChange",
+                "status": "completed",
+                "changes": [
+                    {
+                        "path": str(root / "notes/train.py"),
+                        "kind": {"type": "update", "move_path": None},
+                        "diff": "+accuracy = 0.93\n",
+                    },
+                ],
+            },
+        ]
+    )
     return {"thread_id": "workspace-tools", "other_thread_id": "workspace-other", "root": str(root)}
 
 

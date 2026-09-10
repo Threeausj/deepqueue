@@ -10,12 +10,18 @@ from pathlib import Path
 from deepqueue.agent import AppServer
 from deepqueue.config import initialize
 from deepqueue.db import Database
-from deepqueue.gateway import AccessOptions, CodexGateway, Message, NewThread
+from deepqueue.gateway import CodexGateway, Message, NewThread
 from deepqueue.models import CodexConnection, Server
-from deepqueue.workspace import ExtensionChoice, TerminalInput, TerminalResize, TerminalSize
+from deepqueue.workspace import (
+    ExtensionChoice,
+    TerminalInput,
+    TerminalRecovery,
+    TerminalResize,
+    TerminalSize,
+)
 
 
-async def run(home, terminal_permissions):
+async def run(home, recover_terminal):
     if home.exists():
         raise ValueError("Choose a fresh test directory")
     initialize(home)
@@ -82,13 +88,18 @@ async def run(home, terminal_permissions):
             "turns"
         ]
         assert (await session.tools.file(task_id, "README.md"))["text"].startswith("# Workspace")
-        if terminal_permissions != ":read-only":
-            await session.update_access(task_id, AccessOptions(permissions=terminal_permissions))
         terminal = await session.tools.start_terminal(task_id, TerminalSize(cols=88, rows=24))
         async with asyncio.timeout(20):
             while session.tools.terminal_status(task_id)["state"] == "starting":
                 await asyncio.sleep(0.1)
         state = session.tools.terminal_status(task_id)
+        if state.get("recovery_available") and recover_terminal:
+            recovery = TerminalRecovery(id=state["id"], allow_server_access=True)
+            terminal = await session.tools.start_terminal(task_id, recovery, recovery=recovery)
+            async with asyncio.timeout(20):
+                while session.tools.terminal_status(task_id)["state"] == "starting":
+                    await asyncio.sleep(0.1)
+            state = session.tools.terminal_status(task_id)
         assert state["state"] == "running", state
         await session.tools.resize_terminal(
             task_id, TerminalResize(id=terminal["id"], cols=92, rows=25)
@@ -104,12 +115,18 @@ async def run(home, terminal_permissions):
                 await asyncio.sleep(0.1)
         await session.tools.stop_terminal(task_id, terminal["id"])
         await asyncio.wait_for(session.tools.terminals[task_id]["task"], 10)
+        after = (await session.open_thread(task_id, 40, force=True))["thread"]
+        assert after["sandbox"]["type"] == "readOnly", after["sandbox"]
+        assert after["activePermissionProfile"]["id"] == ":read-only"
+        assert after["approvalPolicy"] == "never"
         report = {
             "verified": True,
             "model": "gpt-5.6-luna",
             "task_id": task_id,
             "native_skill_input": True,
             "native_terminal_input_resize_stop": True,
+            "agent_permissions_preserved": True,
+            "terminal_recovery": state.get("execution_mode") == "server",
             "file_preview": True,
             "cache": True,
             "training_runs": 0,
@@ -119,8 +136,6 @@ async def run(home, terminal_permissions):
     finally:
         if task_id:
             with contextlib.suppress(Exception):
-                await session.update_access(task_id, AccessOptions(permissions=":read-only"))
-            with contextlib.suppress(Exception):
                 await session.rpc("thread/archive", {"threadId": task_id})
         await gateway.close()
 
@@ -129,9 +144,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument(
-        "--terminal-permissions",
-        default=":read-only",
-        choices=[":read-only", ":workspace", ":danger-full-access"],
+        "--recover-terminal",
+        action="store_true",
+        help="Explicitly allow one server-account printf terminal after a namespace failure",
     )
     options = parser.parse_args()
-    asyncio.run(run(options.home.resolve(), options.terminal_permissions))
+    asyncio.run(run(options.home.resolve(), options.recover_terminal))

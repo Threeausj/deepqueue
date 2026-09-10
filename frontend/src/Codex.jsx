@@ -2,12 +2,13 @@ import React, {
   lazy,
   Suspense,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowUp,
@@ -43,6 +44,7 @@ import { api, idPath, serverLabel } from "./api.js";
 import { effortLabel } from "./AgentModels.jsx";
 import { Empty, IconButton, Modal } from "./components.jsx";
 import { applyCodexEvent } from "./codexEvents.js";
+import { conversationFile } from "./codexFiles.js";
 import CodexTree from "./CodexTree.jsx";
 import CodexComposer from "./CodexComposer.jsx";
 const WorkspacePanels = lazy(() => import("./WorkspacePanels.jsx"));
@@ -123,6 +125,16 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
   const panelKey = `deepqueue.codex.tools.${server.name}`;
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState("files");
+  const [previewRequest, setPreviewRequest] = useState(null);
+  const previewFile = useCallback((target) => {
+    setPreviewRequest({
+      ...target,
+      threadId: currentThread.current,
+      requestId: crypto.randomUUID(),
+    });
+    setPanelTab("preview");
+    setPanelOpen(true);
+  }, []);
   const [panelWidth, setPanelWidth] = useState(() => {
     try {
       return Math.max(
@@ -851,7 +863,12 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
                 {thread.turns?.map((turn) => (
                   <React.Fragment key={turn.id}>
                     {(turn.items || []).map((item) => (
-                      <ConversationItem key={item.id} item={item} />
+                      <ConversationItem
+                        key={item.id}
+                        item={item}
+                        cwd={thread.cwd}
+                        onFile={previewFile}
+                      />
                     ))}
                     {turn.error && (
                       <div className="notice error-text">
@@ -1062,6 +1079,9 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
               {...{ base, thread, ready }}
               open={panelOpen}
               tab={panelTab}
+              previewRequest={
+                previewRequest?.threadId === thread.id ? previewRequest : null
+              }
               onTab={setPanelTab}
               onClose={() => setPanelOpen(false)}
               onResize={resizePanel}
@@ -1412,7 +1432,28 @@ function TaskMenu({ children }) {
   );
 }
 
-const ConversationItem = memo(function ConversationItem({ item }) {
+const ConversationItem = memo(function ConversationItem({ item, cwd, onFile }) {
+  const previewLink = (href, children) => {
+    const target = conversationFile(href, cwd);
+    return target ? (
+      <button
+        type="button"
+        className="codex-file-link"
+        title={`预览 ${target.path}`}
+        onClick={() => onFile(target)}
+      >
+        {children}
+      </button>
+    ) : (
+      <a
+        href={defaultUrlTransform(href || "")}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {children}
+      </a>
+    );
+  };
   if (item.type === "userMessage")
     return (
       <article className="codex-message user">
@@ -1438,7 +1479,31 @@ const ConversationItem = memo(function ConversationItem({ item }) {
           <span className="codex-mini-mark">✳</span>Codex
         </span>
         <div className="markdown">
-          <Markdown remarkPlugins={[remarkGfm]} skipHtml>
+          <Markdown
+            remarkPlugins={[remarkGfm]}
+            skipHtml
+            urlTransform={(url) =>
+              conversationFile(url, cwd) ? url : defaultUrlTransform(url)
+            }
+            components={{
+              a: ({ href, children }) => previewLink(href, children),
+              img: ({ src, alt }) => {
+                const target = conversationFile(src, cwd);
+                return target ? (
+                  <button
+                    type="button"
+                    className="codex-file-link"
+                    onClick={() => onFile(target)}
+                  >
+                    <Files size={14} />
+                    {alt || target.path}
+                  </button>
+                ) : (
+                  <img src={defaultUrlTransform(src || "")} alt={alt || ""} />
+                );
+              },
+            }}
+          >
             {item.text || ""}
           </Markdown>
         </div>
@@ -1475,15 +1540,36 @@ const ConversationItem = memo(function ConversationItem({ item }) {
                 : ""}
         </small>
       </summary>
-      <pre>
-        {item.aggregatedOutput ||
-          item.text ||
-          (item.changes
-            ? item.changes
-                .map((change) => `${change.path}\n${change.diff || ""}`)
-                .join("\n\n")
-            : JSON.stringify(item.result || item, null, 2))}
-      </pre>
+      {item.type === "fileChange" && item.changes?.length ? (
+        <div className="codex-file-changes">
+          {item.changes.map((change, index) => {
+            const path = change.kind?.move_path || change.path;
+            return (
+              <section key={`${path}:${index}`}>
+                {previewLink(
+                  path,
+                  <>
+                    <Files size={14} />
+                    <span>{path}</span>
+                    <small>预览</small>
+                  </>,
+                )}
+                {change.diff && <pre>{change.diff}</pre>}
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+        <pre>
+          {item.aggregatedOutput ||
+            item.text ||
+            (item.changes
+              ? item.changes
+                  .map((change) => `${change.path}\n${change.diff || ""}`)
+                  .join("\n\n")
+              : JSON.stringify(item.result || item, null, 2))}
+        </pre>
+      )}
     </details>
   );
 });

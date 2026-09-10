@@ -23,7 +23,14 @@ from .config import load_settings
 from .history_cache import HistoryCache
 from .models import CodexConnection, EffortId, Model, ModelId, Server
 from .preview import PreviewManager, PreviewReference, PreviewTarget, credential
-from .workspace import ExtensionChoice, TerminalInput, TerminalResize, TerminalSize, WorkspaceTools
+from .workspace import (
+    ExtensionChoice,
+    TerminalInput,
+    TerminalRecovery,
+    TerminalResize,
+    TerminalSize,
+    WorkspaceTools,
+)
 
 SUPPORTED_REQUESTS = {
     "item/commandExecution/requestApproval",
@@ -836,6 +843,12 @@ def router(gateway):
     @routes.post("/threads/{thread_id}/terminal")
     async def start_terminal(name: str, thread_id: str, data: TerminalSize):
         return await (await gateway.session(name)).tools.start_terminal(thread_id, data)
+
+    @routes.post("/threads/{thread_id}/terminal/recover")
+    async def recover_terminal(name: str, thread_id: str, data: TerminalRecovery):
+        return await (await gateway.session(name)).tools.start_terminal(
+            thread_id, data, recovery=data
+        )
 
     @routes.post("/threads/{thread_id}/terminal/input")
     async def terminal_input(name: str, thread_id: str, data: TerminalInput):

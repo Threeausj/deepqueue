@@ -471,3 +471,50 @@
 .preview-origin-settings[open] summary {
   margin-bottom: 14px;
 }
+
+.workspace-terminal-recovery {
+  padding: 0 14px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.workspace-terminal-recovery p {
+  margin: 0 0 9px;
+}
+.workspace-terminal-recovery .button {
+  white-space: normal;
+}
+.codex-file-link {
+  display: inline;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  font: inherit;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.codex-file-link svg {
+  vertical-align: middle;
+  margin-right: 5px;
+}
+.codex-file-changes {
+  padding: 8px 12px;
+}
+.codex-file-changes .codex-file-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 0;
+}
+.codex-file-changes small {
+  flex-shrink: 0;
+  text-decoration: none;
+}
+.codex-file-changes pre {
+  margin: 4px 0 12px;
+}

@@ -11,6 +11,7 @@ import stat
 import threading
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import Field
@@ -30,6 +31,11 @@ class ExtensionChoice(Model):
 class TerminalSize(Model):
     cols: int = Field(default=100, ge=10, le=400)
     rows: int = Field(default=28, ge=3, le=150)
+
+
+class TerminalRecovery(TerminalSize):
+    id: str = Field(min_length=1, max_length=128)
+    allow_server_access: Literal[True]
 
 
 class TerminalInput(Model):
@@ -252,6 +258,8 @@ class WorkspaceTools:
                     "state": terminal["state"],
                     "error": terminal.get("error"),
                     "exit_code": terminal.get("exit_code"),
+                    "recovery_available": terminal.get("recovery_available", False),
+                    "execution_mode": terminal.get("execution_mode", "session"),
                 },
             }
         )
@@ -282,9 +290,17 @@ class WorkspaceTools:
                 }
             )
 
-    async def start_terminal(self, thread_id, size):
+    async def start_terminal(self, thread_id, size, *, recovery=None):
         async with self.terminal_locks.setdefault(thread_id, asyncio.Lock()):
             previous = self.terminals.get(thread_id)
+            if recovery and (
+                not previous
+                or previous["id"] != recovery.id
+                or previous["state"] not in ("exited", "error")
+                or not previous.get("recovery_available")
+                or recovery.allow_server_access is not True
+            ):
+                raise HTTPException(409, "失败终端已变化，请刷新后重试")
             if previous and previous["state"] in ("starting", "running"):
                 return self.terminal_status(thread_id)
             if sum(t["state"] in ("starting", "running") for t in self.terminals.values()) >= 6:
@@ -303,6 +319,8 @@ class WorkspaceTools:
                 "state": "starting",
                 "buffer": b"",
                 "offset": 0,
+                "execution_mode": "server" if recovery else "session",
+                "recovery_available": False,
             }
             self.terminals[thread_id] = terminal
             params = {
@@ -315,21 +333,45 @@ class WorkspaceTools:
                 "disableOutputCap": True,
                 "env": {"TERM": "xterm-256color"},
             }
-            if thread.get("sandbox"):
+            if recovery:
+                # Explicit, one-process recovery of a known namespace failure. Neither
+                # the default terminal mode nor the agent's task settings are changed.
+                params["sandboxPolicy"] = {"type": "dangerFullAccess"}
+            elif thread.get("sandbox"):
                 params["sandboxPolicy"] = thread["sandbox"]
             client = self.session.require_client()
+
+            def diagnose(detail):
+                lowered = detail.lower()
+                if (
+                    not recovery
+                    and "bwrap:" in lowered
+                    and (
+                        "no permissions to create new namespace" in lowered
+                        or "unprivileged user namespaces" in lowered
+                    )
+                ):
+                    terminal["recovery_available"] = True
+                    terminal["error"] = "服务器禁止创建沙盒所需的用户命名空间，终端尚未启动。"
 
             async def execute():
                 try:
                     result = await client.request("command/exec", params, timeout=24 * 3600)
                     terminal["exit_code"] = result["exitCode"]
                     terminal["state"] = "exited"
+                    if result["exitCode"] != 0:
+                        diagnose(
+                            terminal["buffer"].decode("utf-8", "replace")
+                            + result.get("stdout", "")
+                            + result.get("stderr", "")
+                        )
                 except asyncio.CancelledError:
                     terminal["state"] = "closed"
                     raise
                 except Exception as exc:
                     terminal["state"] = "error"
                     terminal["error"] = str(exc) or "终端连接中断"
+                    diagnose(terminal["error"])
                 finally:
                     self.publish_terminal(thread_id)
 
