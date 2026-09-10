@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
+from codex_activity_fixture import activity
 from codex_fixture import CodexFixture
 from websockets.asyncio.server import unix_serve
 from workspace_fixture import add_workspace, preview_service
@@ -203,6 +204,11 @@ async def fixture_lifespan(app):
 @app.post("/api/fixture/workspace")
 def workspace_fixture():
     return {**add_workspace(fixture, home / "workspace-project"), "port": app.state.preview_port}
+
+
+@app.post("/api/fixture/activity")
+async def activity_fixture(action: str = "setup"):
+    return await activity(fixture, home / "workspace-project", action)
 
 
 @app.post("/api/fixture/namespace-failure")

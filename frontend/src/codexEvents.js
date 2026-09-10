@@ -36,7 +36,14 @@ export function applyCodexEvent(thread, event) {
     const itemIndex = turn.items.findIndex((item) => item.id === p.item.id);
     if (itemIndex === -1) turn.items.push(p.item);
     else turn.items[itemIndex] = { ...turn.items[itemIndex], ...p.item };
-  } else if (event.method?.endsWith("/delta") && p.itemId) {
+  } else if (
+    p.itemId &&
+    (event.method?.endsWith("/delta") ||
+      [
+        "item/commandExecution/outputDelta",
+        "item/reasoning/summaryTextDelta",
+      ].includes(event.method))
+  ) {
     let itemIndex = turn.items.findIndex((item) => item.id === p.itemId);
     const type = event.method.split("/")[1];
     if (itemIndex === -1) {

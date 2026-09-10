@@ -45,6 +45,7 @@ import { effortLabel } from "./AgentModels.jsx";
 import { Empty, IconButton, Modal } from "./components.jsx";
 import { applyCodexEvent } from "./codexEvents.js";
 import { conversationFile } from "./codexFiles.js";
+import { conversationBlocks } from "./codexActivity.js";
 import CodexTree from "./CodexTree.jsx";
 import CodexComposer from "./CodexComposer.jsx";
 const WorkspacePanels = lazy(() => import("./WorkspacePanels.jsx"));
@@ -861,15 +862,12 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
                   </button>
                 )}
                 {thread.turns?.map((turn) => (
-                  <React.Fragment key={turn.id}>
-                    {(turn.items || []).map((item) => (
-                      <ConversationItem
-                        key={item.id}
-                        item={item}
-                        cwd={thread.cwd}
-                        onFile={previewFile}
-                      />
-                    ))}
+                  <React.Fragment key={`${thread.id}:${turn.id}`}>
+                    <ConversationTurn
+                      turn={turn}
+                      cwd={thread.cwd}
+                      onFile={previewFile}
+                    />
                     {turn.error && (
                       <div className="notice error-text">
                         {turn.error.message || JSON.stringify(turn.error)}
@@ -1429,6 +1427,114 @@ function TaskMenu({ children }) {
         </div>
       )}
     </div>
+  );
+}
+
+const ConversationTurn = memo(function ConversationTurn({ turn, cwd, onFile }) {
+  const blocks = useMemo(() => conversationBlocks(turn.items), [turn.items]);
+  return blocks.map((block, index) =>
+    block.activity && block.items.length > 1 ? (
+      <ActivityGroup
+        key={block.id}
+        items={block.items}
+        active={turn.status === "inProgress" && index === blocks.length - 1}
+        interrupted={
+          turn.status === "interrupted" && index === blocks.length - 1
+        }
+        cwd={cwd}
+        onFile={onFile}
+      />
+    ) : (
+      <ConversationItem
+        key={block.id}
+        item={block.items[0]}
+        cwd={cwd}
+        onFile={onFile}
+      />
+    ),
+  );
+});
+
+function ActivityGroup({ items, active, interrupted, cwd, onFile }) {
+  const [open, setOpen] = useState(false);
+  const heading = useRef(null);
+  const counts = new Map();
+  let failures = 0;
+  const names = {
+    reasoning: "段思考",
+    commandExecution: "条命令",
+    fileChange: "次文件变更",
+    agentMessage: "条进度说明",
+  };
+  for (const item of items) {
+    const label = names[item.type] || "次工具调用";
+    counts.set(label, (counts.get(label) || 0) + 1);
+    if (
+      item.status === "failed" ||
+      (typeof item.exitCode === "number" && item.exitCode !== 0)
+    )
+      failures += 1;
+  }
+  return (
+    <details
+      className="codex-activity"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary ref={heading}>
+        <ChevronDown size={15} className="codex-activity-chevron" />
+        <span className="codex-activity-description">
+          <strong>思考与执行过程</strong>
+          <span className="codex-activity-counts">
+            {[...counts]
+              .map(([label, count]) => `${count} ${label}`)
+              .join(" · ")}
+          </span>
+        </span>
+        <span className="codex-activity-status">
+          {active ? (
+            <span>
+              <LoaderCircle size={12} className="spinning" />
+              正在执行
+            </span>
+          ) : (
+            <span>{interrupted ? "已中断" : "已结束"}</span>
+          )}
+          {failures > 0 && (
+            <span className="error-text">
+              <CircleAlert size={12} />
+              {failures} 项失败
+            </span>
+          )}
+        </span>
+      </summary>
+      {open && (
+        <div className="codex-activity-body">
+          {items.map((item) => (
+            <ConversationItem
+              key={item.id}
+              item={item}
+              cwd={cwd}
+              onFile={onFile}
+            />
+          ))}
+          <button
+            type="button"
+            className="codex-activity-collapse"
+            onClick={() => {
+              setOpen(false);
+              requestAnimationFrame(() => {
+                heading.current?.focus({ preventScroll: true });
+                heading.current?.scrollIntoView({ block: "nearest" });
+              });
+            }}
+          >
+            <ChevronDown size={13} />
+            收起这段过程
+          </button>
+        </div>
+      )}
+    </details>
   );
 }
 
