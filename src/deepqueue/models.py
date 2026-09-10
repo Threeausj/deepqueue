@@ -54,6 +54,19 @@ def service_url(value):
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
 
 
+def preview_url(value):
+    value = service_url(value)
+    if value is None:
+        return None
+    from ipaddress import ip_address
+
+    try:
+        ip_address(urlsplit(value).hostname)
+    except ValueError:
+        return value
+    raise ValueError("预览地址请使用域名，例如 https://preview.example.com；本机可使用 localhost")
+
+
 class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
 
@@ -369,6 +382,7 @@ class Server(Model):
 
 class Settings(Model):
     public_url: str | None = None
+    preview_origin: str | None = None
     agent_command: list[str] = Field(default_factory=lambda: ["codex", "app-server"])
     agent_socket: str | None = None
     return_agent_socket: str | None = "auto"
@@ -389,6 +403,7 @@ class Settings(Model):
     link_template: str = "codex://threads/{thread_id}"
 
     _public_url = field_validator("public_url")(service_url)
+    _preview_origin = field_validator("preview_origin")(preview_url)
 
     def model_for(self, phase: str, spec: JobSpec) -> str | None:
         if phase not in AGENT_PHASES:

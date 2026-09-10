@@ -131,6 +131,8 @@ docker compose -f compose.yaml -f deploy/docker/compose.ssh.yaml --profile https
 
 如果 GPU 就在这台 Docker 宿主机上，也通过 SSH 注册它。容器中的 `localhost` 指容器自身，可使用宿主机的可达地址，或自行添加 `host.docker.internal:host-gateway` 映射。不要恢复容器的 `local` 队列来指代宿主机 GPU。
 
+Codex 工作区的「文件」面板复用 SSH/SFTP，「终端」通过原生 app-server PTY 运行。网页服务预览复用 SSH 端口转发，无需开放远端服务端口，也无需为容器新增端口映射。通过 NAS 内网 IP 或穿透域名访问时，在通用设置填写独立预览域名，并把其通配子域名的 HTTPS/WebSocket 转发到同一容器 Web 端口；配置示例见 [网页服务预览与部署](codex-workspace.md#网页服务预览与部署)。此配置不会自动发布公网地址。
+
 ## 运行管理
 
 默认 `DEEPQUEUE_START_SCHEDULER=false`，每次容器启动后调度器保持停止，可从网页或 CLI 开启。若需要机器重启后自动调度，将它改成 `true` 并重新创建服务；此时网页「停止调度」会保持到下一次容器重启，不会被入口程序立即拉起。

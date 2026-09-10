@@ -9,6 +9,7 @@ from pathlib import Path
 import uvicorn
 from codex_fixture import CodexFixture
 from websockets.asyncio.server import unix_serve
+from workspace_fixture import add_workspace, preview_service
 
 from deepqueue.config import initialize, private_write
 from deepqueue.db import Database
@@ -192,9 +193,21 @@ original_lifespan = app.router.lifespan_context
 @asynccontextmanager
 async def fixture_lifespan(app):
     async with unix_serve(fixture.handle, str(home / "codex.sock"), compression=None):
-        async with original_lifespan(app):
-            yield
+        with preview_service() as preview_port:
+            app.state.preview_port = preview_port
+            async with original_lifespan(app):
+                yield
         await fixture.close()
+
+
+@app.post("/api/fixture/workspace")
+def workspace_fixture():
+    return {**add_workspace(fixture, home / "workspace-project"), "port": app.state.preview_port}
+
+
+@app.get("/api/fixture/codex-calls")
+def fixture_calls():
+    return fixture.calls
 
 
 app.router.lifespan_context = fixture_lifespan

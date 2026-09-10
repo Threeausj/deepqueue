@@ -103,6 +103,7 @@ export default function Detail({
   const detailContent = useRef(null);
   const logOutput = useRef(null);
   const followLogs = useRef(true);
+  const logViewportHeight = useRef(0);
   const [followingLogs, setFollowingLogs] = useState(true);
   const [job, setJob] = useState(null);
   const [tab, setTab] = useState("overview");
@@ -140,9 +141,22 @@ export default function Detail({
     if (detailContent.current) detailContent.current.scrollTop = 0;
   }, [id, tab, logRun]);
   useLayoutEffect(() => {
-    if (tab === "logs" && followLogs.current && logOutput.current)
-      logOutput.current.scrollTop = logOutput.current.scrollHeight;
-  }, [logs, tab, logRun]);
+    const node = logOutput.current;
+    if (tab === "logs" && node) {
+      logViewportHeight.current = node.clientHeight;
+      if (followLogs.current) node.scrollTop = node.scrollHeight;
+    }
+  }, [logs, tab, logRun, tmux, job?.id]);
+  useLayoutEffect(() => {
+    const node = logOutput.current;
+    if (tab !== "logs" || !node) return;
+    const observer = new ResizeObserver(() => {
+      if (followLogs.current) node.scrollTop = node.scrollHeight;
+      logViewportHeight.current = node.clientHeight;
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [tab, job?.id]);
   function latestLogs() {
     followLogs.current = true;
     setFollowingLogs(true);
@@ -1024,6 +1038,15 @@ export default function Detail({
                     tabIndex={0}
                     onScroll={(event) => {
                       const node = event.currentTarget;
+                      if (
+                        followLogs.current &&
+                        logViewportHeight.current !== node.clientHeight
+                      ) {
+                        node.scrollTop = node.scrollHeight;
+                        logViewportHeight.current = node.clientHeight;
+                        return;
+                      }
+                      logViewportHeight.current = node.clientHeight;
                       const following =
                         node.scrollHeight - node.scrollTop - node.clientHeight <
                         40;

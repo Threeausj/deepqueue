@@ -20,7 +20,10 @@ from .access import COOKIE, Access
 from .agent import AppServer, AppServerError
 from .codex_transport import start_daemon
 from .config import load_settings
+from .history_cache import HistoryCache
 from .models import CodexConnection, EffortId, Model, ModelId, Server
+from .preview import PreviewManager, PreviewReference, PreviewTarget, credential
+from .workspace import ExtensionChoice, TerminalInput, TerminalResize, TerminalSize, WorkspaceTools
 
 SUPPORTED_REQUESTS = {
     "item/commandExecution/requestApproval",
@@ -59,6 +62,7 @@ class NewThread(AccessOptions):
 
 
 class Message(AccessOptions):
+    extensions: list[ExtensionChoice] = Field(default_factory=list, max_length=16)
     text: str = Field(min_length=1, max_length=128000)
     model: ModelId | None = None
     effort: EffortId | None = None
@@ -117,6 +121,11 @@ class Session:
         self.settings_waiters = {}
         self.fresh_threads = {}
         self.generation = None
+        self.history = HistoryCache()
+        self.history_pending = {}
+        self.history_versions = {}
+        self.loaded_threads = set()
+        self.tools = WorkspaceTools(self)
 
     def status(self):
         return {
@@ -139,6 +148,14 @@ class Session:
                 queue.put_nowait(message)
 
     async def _close(self):
+        await self.tools.close()
+        self.history.clear()
+        self.loaded_threads.clear()
+        for task in self.history_pending.values():
+            task.cancel()
+        await asyncio.gather(*self.history_pending.values(), return_exceptions=True)
+        self.history_pending.clear()
+        self.history_versions.clear()
         if self.reader:
             self.reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -217,6 +234,12 @@ class Session:
         while True:
             message = await self.client.notifications.get()
             method, params = message.get("method"), message.get("params", {})
+            self.tools.event(method, params)
+            thread_id = params.get("threadId") or params.get("thread", {}).get("id")
+            if thread_id:
+                self.invalidate_history(thread_id)
+                if method in ("thread/closed", "thread/unloaded", "thread/archived"):
+                    self.loaded_threads.discard(thread_id)
             if "id" in message:
                 if method == "currentTime/read":
                     await self.client.send(
@@ -397,6 +420,7 @@ class Session:
         async with self.thread_locks.setdefault(thread_id, asyncio.Lock()):
             await self.resume_thread(thread_id)
             await self.rpc("thread/name/set", {"threadId": thread_id, "name": name})
+            self.invalidate_history(thread_id)
             if thread_id in self.fresh_threads:
                 self.fresh_threads[thread_id]["name"] = name
             return {"ok": True, "name": name}
@@ -411,7 +435,7 @@ class Session:
                 if result is None:
                     raise HTTPException(409, "分支结果待确认，请刷新任务目录，避免重复创建")
                 return result
-            source = (await self.read_thread(thread_id, 1))["thread"]
+            source = (await self.read_thread(thread_id, 1, force=True))["thread"]
             if not source.get("turns"):
                 raise HTTPException(409, "请先完成一轮对话再创建分支")
             if not data.last_turn_id and source["turns"][-1]["status"] == "inProgress":
@@ -487,19 +511,59 @@ class Session:
         if resumed.get("thread", {}).get("id") != thread_id:
             raise HTTPException(502, "Codex 返回了另一个任务，请重新连接后重试")
         self.remember_settings(thread_id, resumed)
+        self.loaded_threads.add(thread_id)
         return resumed
 
-    async def open_thread(self, thread_id, limit):
+    async def open_thread(self, thread_id, limit, force=False):
         async with self.thread_locks.setdefault(thread_id, asyncio.Lock()):
-            await self.resume_thread(thread_id)
-            return await self.read_thread(thread_id, limit)
+            if force or thread_id not in self.loaded_threads:
+                await self.resume_thread(thread_id)
+            return await self.read_thread(thread_id, limit, force=force)
 
-    async def read_thread(self, thread_id, limit):
+    def invalidate_history(self, thread_id):
+        self.history.discard(thread_id)
+        if thread_id in self.history_pending:
+            self.history_versions[thread_id] = self.history_versions.get(thread_id, 0) + 1
+
+    async def _fetch_history(self, thread_id):
+        version = self.history_versions.get(thread_id, 0)
+        result = await self.rpc("thread/read", {"threadId": thread_id, "includeTurns": True})
+        if result.get("thread", {}).get("id") != thread_id:
+            raise HTTPException(502, "Codex 返回了另一个任务，请重新连接后重试")
+        if version == self.history_versions.get(thread_id, 0):
+            self.history.put(thread_id, result)
+        return result
+
+    async def read_thread(self, thread_id, limit, force=False):
+        self.require_client()
+        if force:
+            pending = self.history_pending.get(thread_id)
+            if pending:
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(pending)
+            self.invalidate_history(thread_id)
         if thread_id in self.fresh_threads:
             # Codex materializes the rollout only after the first user message.
             result = {"thread": {**self.fresh_threads[thread_id], "turns": []}}
         else:
-            result = await self.rpc("thread/read", {"threadId": thread_id, "includeTurns": True})
+            result = self.history.get(thread_id)
+            if result is None:
+                task = self.history_pending.get(thread_id)
+                if task is None:
+                    task = asyncio.create_task(self._fetch_history(thread_id))
+                    self.history_pending[thread_id] = task
+
+                    def finished(done):
+                        if not done.cancelled():
+                            done.exception()  # Consume errors if every HTTP reader disconnected.
+                        if self.history_pending.get(thread_id) is done:
+                            self.history_pending.pop(thread_id, None)
+                            self.history_versions.pop(thread_id, None)
+
+                    task.add_done_callback(finished)
+                from copy import deepcopy
+
+                result = deepcopy(await asyncio.shield(task))
         if result.get("thread", {}).get("id") != thread_id:
             raise HTTPException(502, "Codex 返回了另一个任务，请重新连接后重试")
         result["thread"] = limited_history(
@@ -528,12 +592,13 @@ class Session:
             resumed = await self.resume_thread(thread_id)
             if resumed.get("thread", {}).get("id") != thread_id:
                 raise HTTPException(502, "Codex 返回了另一个任务，消息未发送")
+            extension_inputs = await self.tools.inputs(thread_id, data.extensions)
             self.sent[key] = (data.model_dump(), None)
             while len(self.sent) > 256:
                 self.sent.popitem(last=False)
             params = {
                 "threadId": thread_id,
-                "input": [{"type": "text", "text": data.text}],
+                "input": [{"type": "text", "text": data.text}, *extension_inputs],
                 "clientUserMessageId": data.request_id,
                 **data.access_params(),
             }
@@ -548,6 +613,7 @@ class Session:
                 ) from exc
             self.sent[key] = (data.model_dump(), result)
             self.fresh_threads.pop(thread_id, None)
+            self.invalidate_history(thread_id)
             self.thread_settings[thread_id].update(
                 {
                     "model": data.model or resumed.get("model"),
@@ -618,6 +684,7 @@ class CodexGateway:
     def __init__(self, home, db, factory=AppServer):
         self.home, self.db, self.factory = home, db, factory
         self.sessions = {}
+        self.previews = PreviewManager(self)
 
     async def session(self, name):
         server = Server.model_validate(self.db.server(name)["config"])
@@ -643,6 +710,7 @@ class CodexGateway:
         return session
 
     async def close(self):
+        await self.previews.close()
         await asyncio.gather(*(s.disconnect() for s in self.sessions.values()))
 
 
@@ -718,12 +786,68 @@ def router(gateway):
         return await (await gateway.session(name)).new_thread(data)
 
     @routes.post("/threads/{thread_id}/open")
-    async def open_thread(name: str, thread_id: str, limit: int = Query(40, ge=1, le=1000)):
-        return await (await gateway.session(name)).open_thread(thread_id, limit)
+    async def open_thread(
+        name: str, thread_id: str, limit: int = Query(40, ge=1, le=1000), force: bool = False
+    ):
+        return await (await gateway.session(name)).open_thread(thread_id, limit, force=force)
 
     @routes.get("/threads/{thread_id}")
-    async def read_thread(name: str, thread_id: str, limit: int = Query(40, ge=1, le=1000)):
-        return await (await gateway.session(name)).read_thread(thread_id, limit)
+    async def read_thread(
+        name: str, thread_id: str, limit: int = Query(40, ge=1, le=1000), force: bool = False
+    ):
+        return await (await gateway.session(name)).read_thread(thread_id, limit, force=force)
+
+    @routes.post("/threads/{thread_id}/preview")
+    async def create_preview(name: str, thread_id: str, data: PreviewTarget, request: Request):
+        return await gateway.previews.create(await gateway.session(name), thread_id, data, request)
+
+    @routes.post("/threads/{thread_id}/preview/renew")
+    async def renew_preview(name: str, thread_id: str, data: PreviewReference, request: Request):
+        preview = gateway.previews.checked(data, await gateway.session(name), thread_id)
+        preview.auth = credential(request)
+        preview.expires = time.monotonic() + 1800
+        return {"ok": True}
+
+    @routes.post("/threads/{thread_id}/preview/close")
+    async def close_preview(name: str, thread_id: str, data: PreviewReference):
+        preview = gateway.previews.checked(data, await gateway.session(name), thread_id)
+        gateway.previews.previews.pop(data.id, None)
+        await preview.close()
+        return {"ok": True}
+
+    @routes.get("/threads/{thread_id}/extensions")
+    async def extensions(name: str, thread_id: str, force: bool = False):
+        return await (await gateway.session(name)).tools.extensions(thread_id, force)
+
+    @routes.get("/threads/{thread_id}/files")
+    async def files(name: str, thread_id: str, path: str = Query("", max_length=4096)):
+        return await (await gateway.session(name)).tools.file(thread_id, path, directory=True)
+
+    @routes.get("/threads/{thread_id}/file")
+    async def file(name: str, thread_id: str, path: str = Query(..., max_length=4096)):
+        return await (await gateway.session(name)).tools.file(thread_id, path)
+
+    @routes.get("/threads/{thread_id}/terminal")
+    async def terminal(name: str, thread_id: str):
+        session = await gateway.session(name)
+        session.require_client()
+        return session.tools.terminal_status(thread_id)
+
+    @routes.post("/threads/{thread_id}/terminal")
+    async def start_terminal(name: str, thread_id: str, data: TerminalSize):
+        return await (await gateway.session(name)).tools.start_terminal(thread_id, data)
+
+    @routes.post("/threads/{thread_id}/terminal/input")
+    async def terminal_input(name: str, thread_id: str, data: TerminalInput):
+        return await (await gateway.session(name)).tools.write_terminal(thread_id, data)
+
+    @routes.post("/threads/{thread_id}/terminal/resize")
+    async def terminal_resize(name: str, thread_id: str, data: TerminalResize):
+        return await (await gateway.session(name)).tools.resize_terminal(thread_id, data)
+
+    @routes.post("/threads/{thread_id}/terminal/stop")
+    async def terminal_stop(name: str, thread_id: str, data: TerminalInput):
+        return await (await gateway.session(name)).tools.stop_terminal(thread_id, data.id)
 
     @routes.post("/threads/{thread_id}/messages")
     async def send_message(name: str, thread_id: str, data: Message):

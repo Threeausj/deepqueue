@@ -34,6 +34,7 @@ function Credential({ token }) {
 export function Deployment({ onSaved, onAuthChange }) {
   const [saved, setSaved] = useState(null);
   const [url, setUrl] = useState("");
+  const [previewOrigin, setPreviewOrigin] = useState("");
   const [credential, setCredential] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -43,6 +44,7 @@ export function Deployment({ onSaved, onAuthChange }) {
       .then((data) => {
         setSaved(data);
         setUrl(data.public_url || "");
+        setPreviewOrigin(data.preview_origin || "");
       })
       .catch((error) => {
         if (error.name !== "AbortError") setError(error.message);
@@ -67,9 +69,11 @@ export function Deployment({ onSaved, onAuthChange }) {
             try {
               const data = await api("/deployment", {
                 public_url: url.trim() || null,
+                preview_origin: previewOrigin.trim() || null,
               });
               setSaved(data);
               setUrl(data.public_url || "");
+              setPreviewOrigin(data.preview_origin || "");
               if (data.credential) setCredential(data.credential);
               await onSaved();
             } catch (error) {
@@ -90,10 +94,32 @@ export function Deployment({ onSaved, onAuthChange }) {
               disabled={busy}
             />
           </label>
+          <details className="preview-origin-settings">
+            <summary>网页服务预览</summary>
+            <label>
+              独立预览域名
+              <input
+                type="url"
+                placeholder="https://preview.example.com"
+                value={previewOrigin}
+                onChange={(event) => setPreviewOrigin(event.target.value)}
+                disabled={busy}
+              />
+            </label>
+            <p className="subtle">
+              通过域名或内网 IP 访问时填写。请将 *.preview.example.com 的
+              DNS、HTTPS 和 WebSocket 转发到 DeepQueue 同一端口。本机 localhost
+              访问可留空。
+            </p>
+          </details>
           <div className="settings-actions">
             <button
               className="button"
-              disabled={busy || url === (saved.public_url || "")}
+              disabled={
+                busy ||
+                (url === (saved.public_url || "") &&
+                  previewOrigin === (saved.preview_origin || ""))
+              }
             >
               {busy ? (
                 <LoaderCircle size={15} className="spinning" />

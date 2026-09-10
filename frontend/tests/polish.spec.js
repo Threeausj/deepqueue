@@ -180,6 +180,10 @@ test("live logs open at the latest output, follow updates and respect history re
   await expect(
     panel.getByRole("button", { name: "复制 tmux 连接命令" }),
   ).toBeEnabled();
+  await panel.getByText("查看终端连接命令", { exact: true }).click();
+  await expect.poll(gap).toBeLessThan(2);
+  await panel.getByText("查看终端连接命令", { exact: true }).click();
+  await expect.poll(gap).toBeLessThan(2);
   count = 140;
   await expect(log).toContainText("Epoch 140");
   await expect.poll(gap).toBeLessThan(2);

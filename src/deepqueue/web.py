@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field, SecretStr, ValidationError, model_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 
 from .access import COOKIE, REMEMBER_SECONDS, Access, LoginThrottled, PasswordThrottle
 from .agent import model_catalog
@@ -32,6 +32,8 @@ from .models import (
     Settings,
     service_url,
 )
+from .preview import PreviewMiddleware
+from .preview import credential as preview_credential
 from .scheduler import Scheduler
 from .servers import ServerUpdate, update_server
 from .transport import Transport, fingerprint, host_key, trust_host
@@ -57,7 +59,15 @@ class GeneralSettings(Model):
 
 
 class DeploymentSettings(Model):
+    preview_origin: str | None = None
     public_url: str | None = None
+
+    @field_validator("preview_origin")
+    @classmethod
+    def valid_preview(cls, value):
+        from .models import preview_url
+
+        return preview_url(value)
 
 
 class Login(Model):
@@ -215,7 +225,8 @@ def create_app(home: Path):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+            "img-src 'self' data: blob:; connect-src 'self'; frame-src http: https: blob:; "
+            "frame-ancestors 'none'; base-uri 'none'"
         )
         response.headers["Cache-Control"] = "no-store"
         return response
@@ -286,7 +297,8 @@ def create_app(home: Path):
         return response
 
     @app.post("/api/auth/logout")
-    def logout():
+    async def logout(request: Request):
+        await gateway.previews.close_auth(preview_credential(request))
         response = JSONResponse({"ok": True})
         response.delete_cookie(COOKIE)
         return response
@@ -365,16 +377,31 @@ def create_app(home: Path):
 
     @app.get("/api/deployment")
     def deployment():
-        return {"public_url": load_settings(home).public_url, "auth_enabled": access.enabled()}
+        return {
+            "public_url": load_settings(home).public_url,
+            "preview_origin": load_settings(home).preview_origin,
+            "auth_enabled": access.enabled(),
+        }
 
     @app.post("/api/deployment")
     def save_deployment(data: DeploymentSettings, request: Request):
         url = service_url(data.public_url)
         credential = access.create("Administrator") if url and not access.has_admin() else None
-        updated = update_settings(home, {"public_url": url})
+        updated = update_settings(
+            home,
+            {
+                "public_url": url,
+                **(
+                    {"preview_origin": data.preview_origin}
+                    if "preview_origin" in data.model_fields_set
+                    else {}
+                ),
+            },
+        )
         response = JSONResponse(
             {
                 "public_url": updated.public_url,
+                "preview_origin": load_settings(home).preview_origin,
                 "auth_enabled": access.enabled(),
                 "credential": credential,
             }
@@ -776,4 +803,5 @@ def create_app(home: Path):
             raise HTTPException(503, "Build the frontend first: npm --prefix frontend run build")
         return FileResponse(static / "index.html")
 
+    app.add_middleware(PreviewMiddleware, manager=gateway.previews)
     return app

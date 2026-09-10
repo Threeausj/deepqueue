@@ -10,6 +10,8 @@ export async function api(path, body, options = {}) {
         }),
   });
   const data = await response.json().catch(() => null);
+  if (response.status === 401 || (path === "/auth/logout" && response.ok))
+    window.dispatchEvent(new Event("deepqueue:auth-reset"));
   if (!response.ok) {
     const detail = data?.detail;
     const error = new Error(

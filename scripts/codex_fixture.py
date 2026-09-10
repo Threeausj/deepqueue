@@ -1,6 +1,7 @@
 """Deterministic app-server protocol fixture. No model calls or user data."""
 
 import asyncio
+import base64
 import copy
 import json
 import time
@@ -16,6 +17,9 @@ class CodexFixture:
         self.calls = []
         self.replies = {}
         self.tasks = set()
+        self.terminals = {}
+        self.skills = []
+        self.plugins = []
         self.profiles = [
             {"id": ":read-only", "allowed": True},
             {"id": ":workspace", "allowed": True},
@@ -159,6 +163,52 @@ class CodexFixture:
                         "userAgent": "DeepQueue protocol fixture (no inference)",
                         "codexHome": "/tmp/codex-fixture-home/.codex",
                     }
+                elif method == "skills/list":
+                    result = {"data": [{"cwd": p["cwds"][0], "skills": self.skills, "errors": []}]}
+                elif method == "plugin/list":
+                    result = {"marketplaces": [{"name": "fixture", "plugins": self.plugins}]}
+                elif method == "command/exec":
+                    self.terminals[p["processId"]] = (socket, message["id"])
+                    await self.emit(
+                        "command/exec/outputDelta",
+                        {
+                            "processId": p["processId"],
+                            "stream": "stdout",
+                            "deltaBase64": base64.b64encode(
+                                b"Fixture terminal (no execution)\r\n$ "
+                            ).decode(),
+                            "capReached": False,
+                        },
+                    )
+                    continue
+                elif method == "command/exec/write":
+                    await self.emit(
+                        "command/exec/outputDelta",
+                        {
+                            "processId": p["processId"],
+                            "stream": "stdout",
+                            "deltaBase64": p["deltaBase64"],
+                            "capReached": False,
+                        },
+                    )
+                    result = {}
+                elif method == "command/exec/resize":
+                    result = {}
+                elif method == "command/exec/terminate":
+                    source, request_id = self.terminals.pop(p["processId"])
+                    await source.send(
+                        json.dumps(
+                            {
+                                "id": request_id,
+                                "result": {
+                                    "exitCode": 0,
+                                    "stdout": "",
+                                    "stderr": "",
+                                },
+                            }
+                        )
+                    )
+                    result = {}
                 elif method == "permissionProfile/list":
                     result = {"data": self.profiles, "nextCursor": None}
                 elif method == "configRequirements/read":

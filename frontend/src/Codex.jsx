@@ -1,4 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  lazy,
+  Suspense,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -16,6 +24,9 @@ import {
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
+  PanelRight,
+  Files,
+  Monitor,
   Plug,
   Plus,
   Pencil,
@@ -33,6 +44,15 @@ import { effortLabel } from "./AgentModels.jsx";
 import { Empty, IconButton, Modal } from "./components.jsx";
 import { applyCodexEvent } from "./codexEvents.js";
 import CodexTree from "./CodexTree.jsx";
+import CodexComposer from "./CodexComposer.jsx";
+const WorkspacePanels = lazy(() => import("./WorkspacePanels.jsx"));
+import {
+  cachedHistory,
+  cacheHistory,
+  historyKey,
+  readDraft,
+  saveDraft,
+} from "./codexCache.js";
 import { projectTree, titleOf } from "./codexTree.js";
 import { AccessDialog, PermissionFields, accessLabel } from "./CodexAccess.jsx";
 
@@ -92,7 +112,30 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
   const [streaming, setStreaming] = useState(false);
   const [threads, setThreads] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [treeOpen, setTreeOpen] = useState(true);
+  const treeKey = `deepqueue.codex.sidebar.${server.name}`;
+  const [treeOpen, setTreeOpen] = useState(() => {
+    try {
+      return localStorage.getItem(treeKey) !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const panelKey = `deepqueue.codex.tools.${server.name}`;
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState("files");
+  const [panelWidth, setPanelWidth] = useState(() => {
+    try {
+      return Math.max(
+        300,
+        Math.min(680, Number(localStorage.getItem(panelKey)) || 420),
+      );
+    } catch {
+      return 420;
+    }
+  });
+  const [selections, setSelections] = useState([]);
+  const eventVersion = useRef(0);
+  const forceHistory = useRef(false);
   const [taskProject, setTaskProject] = useState("");
   const [listLoading, setListLoading] = useState(false);
   const [cursor, setCursor] = useState(null);
@@ -145,11 +188,58 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
   }, []);
   useEffect(() => {
     const screen = window.matchMedia("(max-width: 760px)");
-    const resize = () => setTreeOpen(!screen.matches || !currentThread.current);
+    const resize = () => {
+      if (screen.matches) setTreeOpen(!currentThread.current);
+      else {
+        try {
+          setTreeOpen(localStorage.getItem(treeKey) !== "false");
+        } catch {
+          setTreeOpen(true);
+        }
+      }
+    };
     resize();
     screen.addEventListener("change", resize);
     return () => screen.removeEventListener("change", resize);
   }, []);
+  function toggleTree() {
+    const next = !treeOpen;
+    setTreeOpen(next);
+    if (!window.matchMedia("(max-width: 760px)").matches) {
+      try {
+        localStorage.setItem(treeKey, String(next));
+      } catch {
+        /* Optional storage. */
+      }
+    }
+  }
+  function openPanel(tab) {
+    setPanelTab(tab);
+    setPanelOpen(true);
+  }
+  function resizePanel(event) {
+    event.preventDefault();
+    const start = event.clientX,
+      width = panelWidth;
+    const move = (event) =>
+      setPanelWidth(
+        Math.max(300, Math.min(680, width + start - event.clientX)),
+      );
+    const stop = (event) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      try {
+        localStorage.setItem(
+          panelKey,
+          String(Math.max(300, Math.min(680, width + start - event.clientX))),
+        );
+      } catch {
+        /* Optional storage. */
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+  }
   function openThread(id) {
     setNewTask(false);
     if (window.matchMedia("(max-width: 760px)").matches) setTreeOpen(false);
@@ -225,6 +315,16 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
         return;
       }
       const p = event.params || {};
+      window.dispatchEvent(
+        new CustomEvent("deepqueue:workspace-event", {
+          detail: { base, event },
+        }),
+      );
+      if (
+        (p.threadId || p.thread?.id) === currentThread.current &&
+        /^(thread|turn|item)\//.test(event.method)
+      )
+        eventVersion.current += 1;
       if (["deepqueue/status", "deepqueue/resync"].includes(event.method)) {
         setStatus(p);
         if (event.method === "deepqueue/resync")
@@ -320,15 +420,30 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
   }, [ready, status.generation, search, revision]);
 
   useEffect(() => {
-    setThread(null);
-    setText("");
-    setModel("");
-    setEffort("");
+    setThread(
+      ready
+        ? cachedHistory(historyKey(base, status.generation, route.thread))
+        : null,
+    );
+    const draft = readDraft(`${base}:${route.thread}`);
+    setText(draft.text || "");
+    setSelections(draft.selections || []);
+    setModel(draft.model || "");
+    setEffort(draft.effort || "");
     setHistoryLimit(40);
     setAccessOpen(false);
     setRename(null);
     follow.current = true;
-  }, [route.thread]);
+  }, [route.thread, status.generation]);
+
+  useEffect(() => {
+    if (ready && thread && thread.id === route.thread)
+      cacheHistory(historyKey(base, status.generation, thread.id), thread);
+  }, [thread, ready, status.generation]);
+  useEffect(() => {
+    if (thread && thread.id === route.thread)
+      saveDraft(`${base}:${route.thread}`, { text, selections, model, effort });
+  }, [text, selections, model, effort, thread?.id]);
 
   useEffect(() => {
     if (!ready || !route.thread) return;
@@ -336,20 +451,24 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
     let timer;
     setLoading(true);
     async function read(open = false) {
+      const started = eventVersion.current;
+      const force = forceHistory.current;
+      forceHistory.current = false;
       try {
         const result = await api(
-          `${base}/threads/${idPath(route.thread)}${open ? "/open" : ""}?limit=${historyLimit}`,
+          `${base}/threads/${idPath(route.thread)}${open ? "/open" : ""}?limit=${historyLimit}${force ? "&force=true" : ""}`,
           open ? {} : undefined,
           { signal: controller.signal },
         );
-        if (!controller.signal.aborted) setThread(result.thread);
+        if (!controller.signal.aborted && started === eventVersion.current)
+          setThread(result.thread);
       } catch (error) {
         if (error.name !== "AbortError") setError(error.message);
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
           // Repair missed events after reconnect or an external client changing this task.
-          timer = setTimeout(() => read(), 8000);
+          timer = setTimeout(() => read(), 15000);
         }
       }
     }
@@ -373,6 +492,7 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
     const result = await run(() =>
       api(`${base}/threads/${idPath(taskId)}/messages`, {
         text: value,
+        extensions: selections.map(({ kind, id }) => ({ kind, id })),
         model: model || null,
         effort: effort || null,
         request_id: crypto.randomUUID(),
@@ -380,6 +500,8 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
     );
     if (result && currentThread.current === taskId) {
       setText("");
+      setSelections([]);
+      saveDraft(`${base}:${taskId}`, {});
       follow.current = true;
       setThread((old) =>
         applyCodexEvent(old, {
@@ -422,7 +544,7 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
           icon={PanelLeft}
           label={treeOpen ? "收起任务目录" : "展开任务目录"}
           aria-expanded={treeOpen}
-          onClick={() => setTreeOpen((open) => !open)}
+          onClick={toggleTree}
         />
         <div className="codex-host-picker">
           <label>
@@ -446,6 +568,33 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
           {connectionLabels[status.state] || "未连接"}
           {ready && !streaming ? " · 正在恢复实时连接" : ""}
         </span>
+        <div className="codex-tool-triggers">
+          <IconButton
+            icon={Terminal}
+            label="打开终端"
+            disabled={!ready || !thread}
+            onClick={() => openPanel("terminal")}
+          />
+          <IconButton
+            icon={Files}
+            label="打开项目文件"
+            disabled={!ready || !thread}
+            onClick={() => openPanel("files")}
+          />
+          <IconButton
+            icon={Monitor}
+            label="打开预览"
+            disabled={!ready || !thread}
+            onClick={() => openPanel("preview")}
+          />
+          <IconButton
+            icon={PanelRight}
+            label={panelOpen ? "收起工具面板" : "展开工具面板"}
+            aria-expanded={panelOpen}
+            disabled={!thread}
+            onClick={() => setPanelOpen((value) => !value)}
+          />
+        </div>
         <div className="row-actions">
           <button
             className="button"
@@ -518,7 +667,10 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
         </div>
       )}
 
-      <div className={`codex-layout ${treeOpen ? "tree-open" : "tree-closed"}`}>
+      <div
+        className={`codex-layout ${treeOpen ? "tree-open" : "tree-closed"} ${panelOpen && thread ? "tools-open" : ""}`}
+        style={{ "--tools-width": `${panelWidth}px` }}
+      >
         {treeOpen && (
           <button
             className="codex-tree-scrim"
@@ -601,6 +753,15 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
                   </p>
                 </div>
                 <div className="row-actions">
+                  <IconButton
+                    icon={RefreshCw}
+                    label="刷新当前对话"
+                    disabled={!ready || loading}
+                    onClick={() => {
+                      forceHistory.current = true;
+                      setRevision((n) => n + 1);
+                    }}
+                  />
                   <IconButton
                     icon={copied ? Check : Copy}
                     label="复制任务 ID"
@@ -745,25 +906,16 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
                 ))}
               </div>
               <form className="codex-composer" onSubmit={send}>
-                <textarea
-                  aria-label="发给 Codex 的消息"
-                  placeholder={
-                    active
-                      ? "补充实验要求，或调整当前方向…"
-                      : "与这台服务器的 Codex 一起工作…"
-                  }
-                  value={text}
-                  onChange={(event) => setText(event.target.value)}
-                  disabled={!ready}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Enter" &&
-                      (event.metaKey || event.ctrlKey) &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault();
-                      event.currentTarget.form.requestSubmit();
-                    }
+                <CodexComposer
+                  key={`${status.generation}:${thread.id}`}
+                  endpoint={`${base}/threads/${idPath(thread.id)}`}
+                  {...{
+                    ready,
+                    text,
+                    setText,
+                    selections,
+                    setSelections,
+                    active,
                   }}
                 />
                 <div className="codex-composer-actions">
@@ -903,6 +1055,19 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
             </div>
           )}
         </div>
+        {thread && (
+          <Suspense fallback={null}>
+            <WorkspacePanels
+              key={`${status.generation}:${thread.id}`}
+              {...{ base, thread, ready }}
+              open={panelOpen}
+              tab={panelTab}
+              onTab={setPanelTab}
+              onClose={() => setPanelOpen(false)}
+              onResize={resizePanel}
+            />
+          </Suspense>
+        )}
       </div>
 
       {settings && (
@@ -1247,7 +1412,7 @@ function TaskMenu({ children }) {
   );
 }
 
-function ConversationItem({ item }) {
+const ConversationItem = memo(function ConversationItem({ item }) {
   if (item.type === "userMessage")
     return (
       <article className="codex-message user">
@@ -1321,7 +1486,7 @@ function ConversationItem({ item }) {
       </pre>
     </details>
   );
-}
+});
 
 function PendingRequest({ item, onReply, busy }) {
   const [answers, setAnswers] = useState({});

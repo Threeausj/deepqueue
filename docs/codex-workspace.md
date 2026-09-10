@@ -116,7 +116,7 @@ deepqueue --url https://queue.example.com codex disconnect gpu-a
 
 ## 设计来源与验证
 
-连接与事件分发方式参考 [codex-gateway](https://github.com/yunhaoli24/codex-gateway)，研究版本 `24f4ecf69dc01f8ef0859fb287b0f3dbcfbf5a10`。本实现使用现有 Python/FastAPI、Paramiko 和 React，浏览器侧采用 HTTP + SSE。[官方 app-server 协议](https://learn.chatgpt.com/docs/app-server)与本机生成的 JSON Schema 用于核对消息格式。
+连接与事件分发方式参考 [codex-gateway](https://github.com/yunhaoli24/codex-gateway)，本次工作区优化参考版本 `f14fa832c5bcb2594be20ba7f583758a7da7c492`。本实现使用现有 Python/FastAPI、Paramiko 和 React，浏览器侧采用 HTTP + SSE。[官方 app-server 协议](https://learn.chatgpt.com/docs/app-server)与本机生成的 JSON Schema 用于核对消息格式。
 
 `tests/test_gateway.py` 使用真实 Unix WebSocket、SSH 密码/加密密钥通道，验证服务器隔离、项目分页与归属、旧版本兼容、交互请求、连接恢复、去重及源任务归档。`frontend/tests/codex.spec.js` 验证项目目录、独立任务、折叠与搜索、项目内创建任务、对话、中断、重新连接和移动抽屉；`codex-tree.spec.js` 覆盖同名路径、嵌套目录和显式独立归属。其 app-server 是明确标识的协议 fixture，不会推理或训练。
 
@@ -125,3 +125,84 @@ deepqueue --url https://queue.example.com codex disconnect gpu-a
 `tests/test_codex_actions.py` 另外覆盖权限限制、延迟生效通知、空任务权限、连接恢复、指定轮次分支、超时去重、原任务不变、管理员鉴权与 CLI 参数。`frontend/tests/codex-actions.spec.js` 覆盖权限错误反馈、分支上下文、返回原聊天、重命名及手机入口。
 
 `uv run python scripts/codex_actions_smoke.py --home /tmp/NEW-ACTIONS-DIRECTORY` 用本机真实 Luna 验证原生权限保存、指定轮次分支和重连后继续聊天。仅产生简短测试对话，不启动训练或生产调度；完成后归档本次创建的测试任务，并在指定目录写入 `actions-report.json`。
+
+## 会话缓存与工作区工具
+
+打开任务时先显示浏览器中已缓存的记录，再与服务器核对。缓存以服务器、连接代数和任务 ID 隔离；后端合并同时发生的历史读取，每次连接只在首次打开任务或强制刷新时恢复原生任务。任务事件、发送消息和重命名会使对应缓存失效，创建分支始终检查最新记录。右上角「刷新当前对话」可强制同步。
+
+后端每台连接最多缓存 64 个任务、32 MiB，快照有效期 20 秒；浏览器保留最近 24 个任务，30 分钟过期，并在当前标签页的 sessionStorage 中保存不超过约 2 百万字符的快照，以加速页面刷新。缓存不替代远端历史；重新连接时使用新连接代数，退出登录或认证失效时清理浏览器缓存。草稿、模型选择和已选 skills 在当前页面按任务保留。
+
+左侧项目、任务分组和整列目录都可收起。整列目录状态按服务器记忆；右侧工具栏提供终端、文件和预览，支持收起、切换和拖动左边缘调整宽度。窄屏时工具面板覆盖对话，关闭后即可继续聊天。
+
+### Slash 插件与 skills
+
+输入 `/` 弹出当前服务器、当前项目目录下的已启用 skills 和已安装且启用的插件，可输入关键词筛选，使用 ↑↓、Enter/Tab 选择、Esc 关闭。选择后显示可移除的标签；Ctrl/⌘ + Enter 发送消息。
+
+目录通过原生 `skills/list` 和 `plugin/list` 读取，按项目目录缓存 60 秒，菜单内可强制刷新。skill 以原生 `UserInput` 的 `type: skill`、`name` 和 `path` 随消息提交；选择插件会在消息中引用插件名称，并装载该插件当前启用的 skills。仅包含工具的插件仍依赖远端 Codex 已安装、启用的工具配置。网页不会安装、启用或修改插件；旧版运行时不支持的目录接口会在菜单中显示具体错误。
+
+### 终端与项目文件
+
+终端是当前任务工作目录中的真实交互式 Bash PTY，使用原生 `command/exec` 的输入、输出事件、窗口缩放和终止接口，启动时沿用任务的有效沙盒权限。每台服务器最多同时打开 6 个终端，每个保留最近 128 KiB 输出。收起面板或切换任务后进程仍在；重新打开可恢复输出。点击关闭终端、断开服务器连接或停止网页网关会结束这些交互终端。长期训练请继续通过队列和 tmux 运行。
+
+文件面板使用本地文件系统或该服务器 SSH 账户的 SFTP，限定在任务的实际项目目录内，并检查符号链接解析结果。可浏览子目录，预览 UTF-8 代码/文本、Markdown、图片、PDF 和 HTML；单文件上限 8 MiB，单目录最多显示 2000 项，超出时可使用终端查看。文件面板是管理员工具，使用服务器账户读取权限；不会调用模型读取或修改文件。HTML 文件在隔离框架中显示；需要加载项目资源、运行脚本或访问后端接口时，启动项目网页服务并使用「网页服务」预览。
+
+### 网页服务预览与部署
+
+在「预览 → 网页服务」填入**当前任务所属服务器**的服务端口，例如 Vite 5173 或 Gradio 7860。服务应已在该服务器的 `127.0.0.1` 或通配监听地址运行。DeepQueue 在本机直接连接，远端使用 SSH `direct-tcpip` 转发；SSH 服务需允许该端口转发。无需开放训练服务器的网页或 WebSocket 公网端口。预览支持完整路径、静态资源、HTTP 请求、重定向和 WebSocket。
+
+通过 `http://localhost:8765` 或 `http://127.0.0.1:8765` 访问 DeepQueue 时，预览自动使用临时 `p-随机值.localhost:8765` 子域名。通过 NAS 内网 IP、内网穿透或公网域名访问时，需要先配置独立预览域名：
+
+1. 在「通用设置 → 公网接入 → 网页服务预览」填写 `https://preview.example.com`。预览域名可独立配置，无需因此填写或启用公网访问地址。
+2. 为 `*.preview.example.com` 配置 DNS/内网穿透和 HTTPS 证书，将其转发到 **DeepQueue 原有 Web 端口**；保留原始 `Host` 并支持 WebSocket 升级。Docker 无需增加端口映射。
+3. 让浏览器能够访问这些子域名，然后在工作区输入远端网页服务端口打开预览。
+
+Nginx 示例（需要另行准备 DNS 和通配证书；容器内反代时将 upstream 改成对应服务地址）：
+
+```nginx
+# map 放在 http 块内。
+map $http_upgrade $preview_connection {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 443 ssl;
+    server_name *.preview.example.com;
+    ssl_certificate /etc/ssl/preview/fullchain.pem;
+    ssl_certificate_key /etc/ssl/preview/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $preview_connection;
+        proxy_read_timeout 3600s;
+        proxy_buffering off;
+    }
+}
+```
+
+每个预览使用独立临时地址，保留原始项目的根路径，使 `/assets`、API 和 WebSocket 地址正常工作，并与 DeepQueue 管理页面隔离。地址有效期 30 分钟，当前显示的预览每 5 分钟续期；关闭预览、退出创建它的登录、撤销凭据、重新连接服务器或重启网关后失效。地址本身是临时访问凭据，请仅通过工作区或「新窗口打开」使用。DeepQueue 登录 Cookie 不会转发给项目。关闭预览只关闭转发，不停止项目服务。上游若主动设置禁止嵌入的响应头，需在项目自身配置中允许嵌入，或在新窗口查看。
+
+### 工具 HTTP 接口
+
+以下路径均以 `/api/servers/{server}/codex/threads/{thread}` 为前缀，要求管理员登录 Cookie 或 Bearer 令牌；浏览器修改请求需 `X-DeepQueue: 1`，服务器提交令牌不能使用工作区工具。
+
+| 方法 / 路径 | 用途 |
+| --- | --- |
+| `GET ?limit=40&force=true`、`POST /open?limit=40&force=true` | 读取/恢复并强制刷新任务；`force` 可省略 |
+| `GET /extensions?force=true` | 插件与 skills 目录 |
+| `POST /messages` | 可附加 `extensions: [{"kind":"skill","id":"/path/SKILL.md"}]` 或 `kind: plugin` 与插件 ID |
+| `GET /files?path=relative/dir` | 项目目录；空 path 为根目录 |
+| `GET /file?path=relative/file` | 文本、MIME 类型和 base64 文件内容 |
+| `GET /terminal`、`POST /terminal` | 终端状态 / 启动，可传 `cols`、`rows` |
+| `POST /terminal/input` | `{ "id": "终端 ID", "data": "文本或控制字符" }` |
+| `POST /terminal/resize` | `{ "id": "终端 ID", "cols": 100, "rows": 28 }` |
+| `POST /terminal/stop` | `{ "id": "终端 ID", "data": "" }` |
+| `POST /preview` | `{ "port": 5173 }`，返回临时 URL、ID 和有效期 |
+| `POST /preview/renew`、`POST /preview/close` | `{ "id": "预览 ID" }` |
+
+`tests/test_workspace_tools.py` 覆盖缓存合并与失效、原生 skill 输入、PTY 和真实 SFTP；`tests/test_preview.py` 验证真实 HTTP/WebSocket 服务经本机和 SSH 的转发，以及鉴权、域名和关闭行为。`frontend/tests/codex-workspace.spec.js` 覆盖任务缓存切换、Slash、终端、文件、预览、折叠、缩放和移动布局。
+
+`uv run python scripts/workspace_smoke.py --home /tmp/NEW-WORKSPACE-CHECK` 使用真实 Luna 验证原生 skill、缓存、文件和 PTY，随后归档隔离测试任务。默认 PTY 为只读沙盒；运行环境不支持 Linux 用户命名空间时，可在明确允许测试 shell 的环境下显式指定 `--terminal-permissions :danger-full-access`。该选项只调整新建测试任务，在测试后恢复只读，不是产品的自动降级行为。
