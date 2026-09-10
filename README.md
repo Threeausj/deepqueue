@@ -66,6 +66,8 @@ cp .env.example .env
 DEEPQUEUE_PUBLIC_URL=https://queue.example.com
 DEEPQUEUE_PORT=8765
 DEEPQUEUE_START_SCHEDULER=false
+# 可选：填写 12–128 位管理员密码，留空使用令牌登录
+DEEPQUEUE_ADMIN_PASSWORD=
 ```
 
 将地址换成实际 HTTPS 域名，DNS 指向部署机。使用内置 Caddy 时，公网需要能访问 80、443 端口；已有服务占用宿主机 8765 时，修改 `DEEPQUEUE_PORT`。
@@ -77,7 +79,7 @@ docker compose build
 docker compose run --rm deepqueue setup
 ```
 
-保存首次输出的 **`admin.token`**，用于网页登录。初始化会暂停容器的 `local` 执行服务器；训练服务器统一通过 SSH 添加。前端在镜像构建时自动编译。
+保存首次输出的 **`admin.token`**，用于网页登录和忘记密码时恢复访问。如果填写了 `DEEPQUEUE_ADMIN_PASSWORD`，初始化也会启用密码登录；密码包含 `$`、`#` 等字符时，在 `.env` 中用单引号包裹。初始化会暂停容器的 `local` 执行服务器；训练服务器统一通过 SSH 添加。前端在镜像构建时自动编译。
 
 ### 3. 配置主控 Codex
 
@@ -96,7 +98,22 @@ docker compose ps
 docker compose logs --tail=100 deepqueue caddy
 ```
 
-打开配置的 HTTPS 域名，用管理员令牌登录。如果主机已有 HTTPS 反向代理，只启动应用：
+打开配置的 HTTPS 域名，用管理员令牌或已设置的密码登录。默认勾选“在此浏览器记住登录 30 天”，刷新页面或重开浏览器可自动恢复登录；取消勾选则使用浏览器会话 Cookie，服务端最多有效 12 小时。主动退出会清除该浏览器的登录 Cookie。
+
+可在 **通用设置 → 密码登录** 随时启用、修改或关闭密码，立即生效。修改密码会撤销其他密码登录，当前修改密码的浏览器保持登录；关闭后，使用密码登录的浏览器需要改用管理员令牌。CLI/skill 的服务器提交令牌不受影响。服务端保存加盐密码摘要，本站登录 Cookie 使用 HttpOnly，HTTPS 下同时启用 Secure；浏览器不保存明文密码。
+
+忘记密码时，可以用管理员令牌登录后重设，或在部署机交互式执行：
+
+```bash
+docker compose exec deepqueue deepqueue access password set
+# 查看状态或关闭密码登录（保留管理员令牌认证）
+docker compose exec deepqueue deepqueue access password status
+docker compose exec deepqueue deepqueue access password disable
+```
+
+`.env` 中的密码只在 `setup` 尚未配置过密码时应用；后续重启、重复初始化不会覆盖网页/CLI 修改，也不会重新打开已关闭的密码登录。初始化后可清空 `.env` 中的密码。
+
+如果主机已有 HTTPS 反向代理，只启动应用：
 
 ```bash
 docker compose up -d deepqueue

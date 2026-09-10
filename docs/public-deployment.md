@@ -39,9 +39,10 @@ administrator token must exist before the last existing one can be revoked.
 
 Alternatively, start a loopback dashboard and set **通用设置 > 公网接入**. The first
 save generates an administrator token, displays it once, and signs in that browser.
-Later visits require the administrator token. Server-scoped tokens cannot sign in
-to the administration dashboard. Disabling the public URL does not remove tokens
-or turn off authentication.
+The optional **通用设置 > 密码登录** section can enable an administrator password
+after this setup. Retain the administrator token for recovery. Server-scoped tokens
+cannot sign in to the administration dashboard. Disabling the public URL does not
+remove tokens or turn off authentication.
 
 Install `deploy/deepqueue-web.service` and `deploy/deepqueue-scheduler.service` into
 the system service directory, then reload systemd and start both units. Run exactly
@@ -56,7 +57,46 @@ the configuration with `nginx -t`, and reload the proxy. Keep the upstream on
 and forwards the request scheme so login cookies are Secure. See the official
 [Nginx proxy documentation](https://nginx.org/en/docs/http/ngx_http_proxy_module.html).
 The application accepts its configured hostname and loopback hosts and rejects
-cross-origin mutations. API calls require an administrator or server token.
+cross-origin mutations. API calls require an administrator session or an administrator
+or server token.
+
+## Optional Password and Browser Sessions
+
+Password login is disabled by default. Enable it in General Settings or use the local
+operator CLI after creating an administrator token:
+
+```bash
+deepqueue --home /var/lib/deepqueue access password set
+deepqueue --home /var/lib/deepqueue access password status
+deepqueue --home /var/lib/deepqueue access password disable
+```
+
+`set` prompts privately and asks for confirmation. It also accepts `--password-env NAME`
+or `--password-file PATH` (`-` reads stdin). The same `access password` commands work
+with a remote administrator client configured using `--url`; server clients cannot
+change login settings. Passwords must be 12–128 characters, without trimming. Storage
+uses a random salt and scrypt (N=32768, r=8, p=3), following an
+[OWASP scrypt profile](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#scrypt).
+Password material is not returned by settings/status endpoints or validation errors.
+Password operations are limited to five attempts per client per minute and 60 globally,
+with at most two concurrent hash operations. Excess attempts return HTTP 429 and
+`Retry-After`; administrator token login remains available for recovery.
+
+The login form defaults to remembering the browser for 30 days. A signed HttpOnly
+Cookie scoped to this site survives browser and service restarts, with its expiration
+also verified on the server. It uses SameSite=Strict and Secure under HTTPS. Turning
+off remember-login omits cookie persistence and limits server validity to 12 hours.
+No password or token is stored in localStorage. Logout clears the current browser's
+Cookie. Both password and token login support remembering the browser.
+
+Changing a password requires the current password when using a password session;
+an administrator token can reset a forgotten password. Changes invalidate other
+password sessions and renew the changing browser's session with its existing remember
+preference. Disabling password login invalidates all password sessions; token sessions
+and server submissions continue working. Revoking an administrator token invalidates
+its browser sessions. Password changes take effect immediately without restarting
+the scheduler or web service. Preserve `access.json` across restarts to preserve both
+credentials and the session signing key.
 
 ## Execution Servers
 

@@ -1,5 +1,29 @@
 # Verification: 2026-09-10
 
+## Optional password and remembered browser login — 2026-09-10
+
+- Full backend suite: **277 passed**. Password coverage includes private salted
+  storage, validation without exposing secrets, per-client throttling, administrator
+  and server-token boundaries, password rotation/disable, concurrent edit protection,
+  local/remote CLI recovery, and remembered/session-only Cookie expiration.
+- The real isolated container-entrypoint lifecycle checks passed with both token
+  and password login, including Secure cookies behind the HTTPS proxy and restoring
+  a remembered login after restarting the web/container entrypoint. Bootstrap
+  preserves later password changes and disabled state.
+- The expanded public-deployment browser workflow passed: enable a password,
+  reject mismatched confirmation and incorrect login, restore access in a new
+  browser context using only persisted cookies, change the password and reject the
+  other browser's old cookie, disable password login, and recover with a token.
+  Server-scoped credentials, exported skills, logout and session-only token login
+  also passed. Desktop and 320 px mobile screenshots were visually reviewed.
+- Ruff, the complete frontend formatting check, production frontend build and
+  `git diff --check` passed. The local web process was updated; scheduler ownership
+  stayed unchanged and both existing Codex connections were restored. Password
+  login remains opt-in on the operational queue.
+- Docker is unavailable in this environment; a real Docker image build remains
+  for a Docker-capable deployment host. Tests used isolated state and fixture
+  passwords, with no real training submissions or model calls.
+
 ## Repository preparation — 2026-09-10
 
 - Full backend suite: **257 passed** with two upstream test-client deprecation warnings.

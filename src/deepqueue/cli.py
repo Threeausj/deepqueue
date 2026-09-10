@@ -15,7 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 from urllib.parse import quote
 
-from .access import Access
+from .access import Access, validate_password
 from .agent import AppServer, model_catalog
 from .config import Secrets, initialize, load_settings, state_home, update_settings
 from .db import SCHEMA_VERSION, Database
@@ -43,6 +43,25 @@ def emit(value):
 
 def json_file(path):
     return json.loads(sys.stdin.read() if path == "-" else Path(path).read_text())
+
+
+def password_value(args):
+    if args.password_env:
+        value = os.environ.get(args.password_env)
+        if value is None:
+            raise ValueError("指定的密码环境变量未设置")
+    elif args.password_file:
+        if args.password_file == "-":
+            value = sys.stdin.read(1025)
+        else:
+            with Path(args.password_file).expanduser().open() as source:
+                value = source.read(1025)
+        value = value.removesuffix("\n").removesuffix("\r")
+    else:
+        value = getpass.getpass("New administrator password: ")
+        if value != getpass.getpass("Confirm administrator password: "):
+            raise ValueError("两次输入的密码不一致")
+    return validate_password(value)
 
 
 def server_update_values(args):
@@ -312,6 +331,14 @@ def parser():
     access.add_parser("list")
     revoke = access.add_parser("revoke")
     revoke.add_argument("id")
+    password = access.add_parser("password", help="Manage optional administrator password login")
+    password_actions = password.add_subparsers(dest="password_action", required=True)
+    password_actions.add_parser("status")
+    password_actions.add_parser("disable")
+    password_set = password_actions.add_parser("set")
+    source = password_set.add_mutually_exclusive_group()
+    source.add_argument("--password-env", help="Read the password from this environment variable")
+    source.add_argument("--password-file", help="Read a private file, or - for stdin")
 
     server = sub.add_parser("server").add_subparsers(dest="action", required=True)
     server.add_parser("list")
@@ -543,6 +570,12 @@ def execute(args):
         return None
     if args.command == "access":
         access = Access(home)
+        if args.action == "password":
+            if args.password_action == "set":
+                access.set_password(password_value(args))
+            elif args.password_action == "disable":
+                access.disable_password()
+            return access.password_status()
         if args.action == "list":
             return access.list()
         if args.action == "revoke":

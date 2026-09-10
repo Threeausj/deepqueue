@@ -7,11 +7,12 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field, ValidationError
+from pydantic import Field, SecretStr, ValidationError, model_validator
 
-from .access import COOKIE, SESSION_SECONDS, Access
+from .access import COOKIE, REMEMBER_SECONDS, Access, LoginThrottled, PasswordThrottle
 from .agent import model_catalog
 from .config import Secrets, load_settings, update_settings
 from .db import SCHEMA_VERSION, Database
@@ -60,7 +61,27 @@ class DeploymentSettings(Model):
 
 
 class Login(Model):
-    token: str = Field(min_length=1, max_length=1024)
+    token: SecretStr | None = Field(default=None, min_length=1, max_length=1024)
+    password: SecretStr | None = Field(default=None, min_length=1, max_length=128)
+    remember: bool = True
+
+    @model_validator(mode="after")
+    def one_credential(self):
+        if (self.token is None) == (self.password is None):
+            raise ValueError("请选择密码或管理员令牌中的一种方式登录")
+        return self
+
+
+class PasswordSettings(Model):
+    enabled: bool
+    password: SecretStr | None = Field(default=None, min_length=12, max_length=128)
+    current_password: SecretStr | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def required_password(self):
+        if self.enabled != (self.password is not None):
+            raise ValueError("启用密码登录时请填写新密码；关闭时无需新密码")
+        return self
 
 
 class AccessRequest(Model):
@@ -147,6 +168,8 @@ def create_app(home: Path):
 
     app = FastAPI(title="DeepQueue", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.codex = gateway
+    password_throttle = PasswordThrottle()
+    app.state.password_throttle = password_throttle
     app.include_router(codex_router(gateway))
 
     @app.middleware("http")
@@ -177,7 +200,7 @@ def create_app(home: Path):
                     else access.authenticate_session(request.cookies.get(COOKIE))
                 )
                 if principal is None:
-                    return JSONResponse({"detail": "需要访问令牌"}, 401)
+                    return JSONResponse({"detail": "请先登录或提供有效访问令牌"}, 401)
                 request.state.principal = principal
                 if principal["server"] is not None and not (
                     request.url.path.startswith(("/api/jobs", "/api/batch"))
@@ -230,11 +253,11 @@ def create_app(home: Path):
                     raise HTTPException(422, "All experiments must use the workspace server")
         return manifest
 
-    def set_session(response, request, principal):
+    def set_session(response, request, principal, *, remember=True):
         response.set_cookie(
             COOKIE,
-            access.session(principal),
-            max_age=SESSION_SECONDS,
+            access.session(principal, remember=remember),
+            max_age=REMEMBER_SECONDS if remember else None,
             httponly=True,
             samesite="strict",
             secure=request.url.scheme == "https",
@@ -242,15 +265,24 @@ def create_app(home: Path):
 
     @app.get("/api/auth")
     def authentication():
-        return {"required": access.enabled() or bool(load_settings(home).public_url)}
+        return {
+            "required": access.enabled() or bool(load_settings(home).public_url),
+            "password_enabled": access.password_status()["enabled"],
+        }
 
     @app.post("/api/auth/login")
     def login(data: Login, request: Request):
-        principal = access.authenticate(data.token)
+        if data.password is not None:
+            with password_throttle.attempt(request.client.host if request.client else "unknown"):
+                principal = access.authenticate_password(data.password.get_secret_value())
+        else:
+            principal = access.authenticate(data.token.get_secret_value())
         if principal is None or principal["server"] is not None:
-            raise HTTPException(401, "管理员访问令牌无效")
+            raise HTTPException(
+                401, "管理员密码无效或未启用" if data.password is not None else "管理员访问令牌无效"
+            )
         response = JSONResponse({"ok": True})
-        set_session(response, request, principal)
+        set_session(response, request, principal, remember=data.remember)
         return response
 
     @app.post("/api/auth/logout")
@@ -258,6 +290,74 @@ def create_app(home: Path):
         response = JSONResponse({"ok": True})
         response.delete_cookie(COOKIE)
         return response
+
+    def password_settings(principal):
+        return {
+            **access.password_status(),
+            "requires_current_password": bool(principal and principal.get("method") == "password"),
+        }
+
+    @app.get("/api/auth/password")
+    def get_password(request: Request):
+        return password_settings(request.state.principal)
+
+    @app.post("/api/auth/password")
+    def save_password(data: PasswordSettings, request: Request):
+        principal = request.state.principal
+        if principal is None or principal["server"] is not None:
+            raise HTTPException(403, "请先使用管理员令牌登录")
+        expected_id = (access.read().get("password") or {}).get("id")
+        password_session = principal.get("method") == "password"
+        with password_throttle.attempt(request.client.host if request.client else "unknown"):
+            if password_session:
+                current = access.authenticate_password(
+                    data.current_password.get_secret_value() if data.current_password else None
+                )
+                if not current or current["id"] != principal["id"]:
+                    raise HTTPException(401, "当前密码不正确，请重新输入")
+            if data.enabled:
+                updated = access.set_password(
+                    data.password.get_secret_value(), expected_id=expected_id
+                )
+            else:
+                access.disable_password(expected_id=expected_id)
+                updated = None
+        response = JSONResponse(
+            {
+                **password_settings(updated if password_session else principal),
+                "login_required": password_session and not data.enabled,
+            }
+        )
+        if password_session:
+            if updated:
+                set_session(
+                    response,
+                    request,
+                    updated,
+                    remember=access.session_remembered(request.cookies.get(COOKIE)),
+                )
+            else:
+                response.delete_cookie(COOKIE)
+        return response
+
+    @app.exception_handler(LoginThrottled)
+    def throttled(request, exc):
+        return JSONResponse(
+            {"detail": str(exc)}, 429, headers={"Retry-After": str(exc.retry_after)}
+        )
+
+    @app.exception_handler(RequestValidationError)
+    def invalid_body(request, exc):
+        # Validation must never echo login passwords, SSH credentials or tokens.
+        return JSONResponse(
+            {
+                "detail": [
+                    {"loc": item["loc"], "msg": item["msg"], "type": item["type"]}
+                    for item in exc.errors()
+                ]
+            },
+            422,
+        )
 
     @app.get("/api/identity")
     def identity(request: Request):

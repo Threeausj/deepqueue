@@ -46,7 +46,7 @@ def test_public_auth_login_rotation_and_origin_boundary(db):
     update_settings(db.home, {"public_url": "https://queue.example.test"})
     with TestClient(create_app(db.home), base_url="https://queue.example.test") as web:
         assert web.get("/api/state").status_code == 401
-        assert web.get("/api/auth").json() == {"required": True}
+        assert web.get("/api/auth").json() == {"required": True, "password_enabled": False}
         assert web.get("/api/state", headers={"Host": "foreign.example"}).status_code == 400
         assert web.post("/api/auth/login", json={"token": admin["token"]}).status_code == 403
         bad_origin = {"X-DeepQueue": "1", "Origin": "https://foreign.example"}
@@ -203,6 +203,30 @@ def live_http(app):
         thread.join(10)
         listener.close()
         assert not thread.is_alive()
+
+
+def test_remote_admin_cli_can_reset_password_and_server_cli_cannot(db, tmp_path, monkeypatch):
+    access = Access(db.home)
+    admin = access.create("Recovery")
+    server = access.create("Training", "local")
+    monkeypatch.setenv("DEEPQUEUE_CLIENT_CONFIG", str(tmp_path / "client.json"))
+    monkeypatch.setenv("DEEPQUEUE_TOKEN", admin["token"])
+    monkeypatch.setenv("FIXTURE_PASSWORD", "fixture-remote-password")
+    monkeypatch.delenv("DEEPQUEUE_SERVER", raising=False)
+    with live_http(create_app(db.home)) as url:
+        arguments = ["--url", url, "access", "password"]
+        assert not execute(parser().parse_args([*arguments, "status"]))["enabled"]
+        result = execute(
+            parser().parse_args([*arguments, "set", "--password-env", "FIXTURE_PASSWORD"])
+        )
+        assert result["enabled"] and "fixture-remote-password" not in json.dumps(result)
+        assert access.authenticate_password("fixture-remote-password")
+        monkeypatch.setenv("DEEPQUEUE_TOKEN", server["token"])
+        with pytest.raises(ValueError, match="cannot administer"):
+            execute(parser().parse_args([*arguments, "disable"]))
+        assert access.password_status()["enabled"]
+        monkeypatch.setenv("DEEPQUEUE_TOKEN", admin["token"])
+        assert not execute(parser().parse_args([*arguments, "disable"]))["enabled"]
 
 
 def test_remote_cli_submits_and_controls_without_a_local_queue(db, tmp_path, monkeypatch):

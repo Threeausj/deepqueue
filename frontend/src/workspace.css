@@ -758,3 +758,48 @@
     min-height: 110px;
   }
 }
+
+.password-settings-heading,
+.password-settings-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.password-settings-heading {
+  justify-content: space-between;
+}
+.password-settings-heading h2 {
+  margin: 0;
+}
+.password-settings-description {
+  margin: 12px 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.password-settings .password-enabled,
+.login-page .remember-login {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+}
+.password-settings .password-enabled input,
+.login-page .remember-login input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.password-fields,
+.current-password-field {
+  margin-top: 16px;
+}
+.login-methods {
+  margin: 0;
+  width: 100%;
+}
+.login-methods button {
+  flex: 1;
+  padding: 8px;
+}

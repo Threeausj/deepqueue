@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.request
 
-from .access import Access
+from .access import Access, validate_password
 from .cli import daemon_state, execute, parser
 from .config import load_settings, state_home, update_settings
 from .db import Database
@@ -45,6 +45,9 @@ def local_command(home, *args):
 def setup(home):
     """Explicit bootstrap; credentials are emitted only by this operator command."""
     url = public_url()
+    password = os.environ.get("DEEPQUEUE_ADMIN_PASSWORD")
+    if password:
+        validate_password(password)
     with ownership(home):
         fresh = not (home / "config.json").exists()
         local_command(home, "init")
@@ -53,8 +56,12 @@ def setup(home):
             Database(home).enable_server("local", False)
         access = Access(home)
         admin = None if access.has_admin() else access.create("docker-bootstrap-admin")
+        # Initial opt-in only: rerunning setup must preserve a later password change or disable.
+        if password and "password" not in access.read():
+            access.set_password(password)
         update_settings(home, {"public_url": url})
         result = {"home": str(home), "public_url": url, "admin_created": admin is not None}
+        result["password_enabled"] = access.password_status()["enabled"]
         if admin:
             result["admin"] = admin
         return result
@@ -103,6 +110,8 @@ def stop_children(home, web):
 
 
 def serve(home):
+    # The bootstrap secret is not needed by the web, scheduler or agent processes.
+    os.environ.pop("DEEPQUEUE_ADMIN_PASSWORD", None)
     url, auto_start, web_port = public_url(), start_on_boot(), port()
     with ownership(home):
         if not (home / "config.json").exists() or not Access(home).has_admin():

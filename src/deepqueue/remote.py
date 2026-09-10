@@ -151,6 +151,17 @@ def execute_remote(args, config):
 
     client = Client(config)
     command, action = args.command, getattr(args, "action", None)
+    if command == "access" and action == "password":
+        from .cli import password_value
+
+        if config["server"] is not None:
+            raise ValueError("Password settings require an administrator client")
+        if args.password_action == "status":
+            return client.request("/auth/password")
+        data = {"enabled": args.password_action == "set"}
+        if data["enabled"]:
+            data["password"] = password_value(args)
+        return client.request("/auth/password", data)
     if command == "models":
         return client.request("/models", server=config["server"])
     if command == "codex":

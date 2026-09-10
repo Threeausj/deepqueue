@@ -13,6 +13,7 @@ services:
     environment:
       DEEPQUEUE_PUBLIC_URL: ${DEEPQUEUE_PUBLIC_URL:?Copy .env.example to .env and set the HTTPS origin}
       DEEPQUEUE_START_SCHEDULER: ${DEEPQUEUE_START_SCHEDULER:-false}
+      DEEPQUEUE_ADMIN_PASSWORD: ${DEEPQUEUE_ADMIN_PASSWORD:-}
       # Only the host loopback proxy and the private Compose network can reach this port.
       FORWARDED_ALLOW_IPS: "*"
     ports:

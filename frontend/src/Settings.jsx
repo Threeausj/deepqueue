@@ -11,6 +11,7 @@ import {
 import { api } from "./api.js";
 import { AgentModels } from "./AgentModels.jsx";
 import { Deployment } from "./Deployment.jsx";
+import PasswordSettings from "./PasswordSettings.jsx";
 import { Stamp } from "./components.jsx";
 
 export default function Settings({
@@ -207,6 +208,11 @@ export default function Settings({
         </form>
       )}
       <Deployment onSaved={onSaved} onAuthChange={onAuthChange} />
+      <PasswordSettings
+        authEnabled={data?.auth_enabled}
+        onSaved={onSaved}
+        onAuthChange={onAuthChange}
+      />
     </section>
   );
 }

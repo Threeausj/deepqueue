@@ -43,7 +43,9 @@ docker compose build
 docker compose run --rm deepqueue setup
 ```
 
-`setup` 会创建数据库，暂停容器的 `local` 执行服务器，并在终端**首次显示管理员令牌**。保存该令牌，用它登录网页。重复执行会保留现有管理员、SSH 配置、任务和模型设置。正常启动不会在日志中输出令牌；未初始化时会明确退出并提示执行 `setup`。
+`setup` 会创建数据库，暂停容器的 `local` 执行服务器，并在终端**首次显示管理员令牌**。保存该令牌，用它登录网页或恢复密码访问。重复执行会保留现有管理员、SSH 配置、任务和模型设置。正常启动不会在日志中输出令牌；未初始化时会明确退出并提示执行 `setup`。
+
+密码登录可选，默认关闭。首次 `setup` 前可在 `.env` 填写 `DEEPQUEUE_ADMIN_PASSWORD`，长度 12–128 个字符；包含 `$`、`#` 等字符时用单引号包裹。该值仅在密码从未配置过时应用，重复初始化和重启会保留网页/CLI 修改与关闭状态。初始化后可清空该环境变量。密码摘要写入私有队列卷，启动 Web、调度器与 agent 时不传递此初始化环境变量。
 
 登录主控容器内的 Codex，供资源预估和启动规划使用：
 
@@ -68,7 +70,17 @@ docker compose ps
 docker compose logs --tail=100 deepqueue caddy
 ```
 
-打开配置的 HTTPS 地址，使用刚才的管理员令牌登录。Caddy 自动申请和续期证书，证书存入独立卷。Codex 对话事件直接流式转发，静态资源单独压缩。[Caddy 自动 HTTPS](https://caddyserver.com/docs/automatic-https)、[流式代理配置](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)。
+打开配置的 HTTPS 地址，使用管理员令牌或已配置的密码登录。登录页默认记住此浏览器 30 天，持久 Cookie 支持刷新、浏览器重开和容器重启后自动恢复登录；取消勾选时使用浏览器会话 Cookie，服务端最多有效 12 小时。退出登录清除此浏览器 Cookie。Cookie 采用 HttpOnly、SameSite=Strict，HTTPS 下启用 Secure，不向网页脚本暴露登录凭据。Caddy 自动申请和续期证书，证书存入独立卷。Codex 对话事件直接流式转发，静态资源单独压缩。[Caddy 自动 HTTPS](https://caddyserver.com/docs/automatic-https)、[流式代理配置](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)。
+
+在 **通用设置 → 密码登录** 可启用、修改或关闭密码。密码登录后修改设置需要当前密码；使用管理员令牌登录可重置忘记的密码。修改会撤销其他密码登录并为当前浏览器更新 Cookie；关闭会撤销全部密码登录，保留管理员和服务器令牌认证。也可在部署机运行以下命令，立即生效，无需重启：
+
+```bash
+docker compose exec deepqueue deepqueue access password status
+docker compose exec deepqueue deepqueue access password set
+docker compose exec deepqueue deepqueue access password disable
+```
+
+`set` 隐藏输入并要求确认。自动化可使用 `--password-env VARIABLE_NAME` 或 `--password-file /private/path`（`-` 表示标准输入），避免在命令行中传递明文密码。
 
 如果主机已有 Nginx/Caddy/宝塔反向代理，则只启动应用：
 
@@ -154,7 +166,7 @@ Compose 给予 60 秒退出时间，入口会正常停止在网页/CLI 中开启
 
 | Compose 卷 | 容器目录 | 保存内容 |
 | --- | --- | --- |
-| `queue-data` | `/var/lib/deepqueue` | SQLite 队列、全局配置、管理员与提交令牌摘要、SSH 主机指纹、凭据密文/密钥、日志和归档 |
+| `queue-data` | `/var/lib/deepqueue` | SQLite 队列、全局配置、管理员密码与令牌摘要、登录签名密钥、SSH 主机指纹、凭据密文/密钥、日志和归档 |
 | `codex-data` | `/home/deepqueue/.codex` | 主控 Codex 登录、提供商配置及主控 agent 记录 |
 | `caddy-data`、`caddy-config` | `/data`、`/config` | Caddy 证书和运行配置 |
 
