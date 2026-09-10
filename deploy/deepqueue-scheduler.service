@@ -1,0 +1,18 @@
+[Unit]
+Description=DeepQueue experiment scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=deepqueue
+Group=deepqueue
+WorkingDirectory=/opt/deepqueue
+ExecStart=/opt/deepqueue/.venv/bin/deepqueue --home /var/lib/deepqueue daemon run
+Restart=on-failure
+RestartSec=5
+KillMode=process
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

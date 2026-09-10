@@ -1,0 +1,16 @@
+[Unit]
+Description=DeepQueue web and submission API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=deepqueue
+Group=deepqueue
+WorkingDirectory=/opt/deepqueue
+ExecStart=/opt/deepqueue/.venv/bin/deepqueue --home /var/lib/deepqueue web --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

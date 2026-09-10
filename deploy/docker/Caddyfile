@@ -1,0 +1,7 @@
+{$DEEPQUEUE_PUBLIC_URL} {
+	@assets path /assets/*
+	encode @assets zstd gzip
+	reverse_proxy deepqueue:8765 {
+		flush_interval -1
+	}
+}

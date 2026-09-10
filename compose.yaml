@@ -1,0 +1,56 @@
+name: deepqueue
+
+services:
+  deepqueue:
+    image: ${DEEPQUEUE_IMAGE:-deepqueue:local}
+    build:
+      context: .
+      args:
+        CODEX_VERSION: ${CODEX_VERSION:-0.153.4}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      DEEPQUEUE_PUBLIC_URL: ${DEEPQUEUE_PUBLIC_URL:?Copy .env.example to .env and set the HTTPS origin}
+      DEEPQUEUE_START_SCHEDULER: ${DEEPQUEUE_START_SCHEDULER:-false}
+      # Only the host loopback proxy and the private Compose network can reach this port.
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:${DEEPQUEUE_PORT:-8765}:8765"
+    volumes:
+      - queue-data:/var/lib/deepqueue
+      - codex-data:/home/deepqueue/.codex
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: [https]
+    restart: unless-stopped
+    depends_on:
+      deepqueue:
+        condition: service_healthy
+    environment:
+      DEEPQUEUE_PUBLIC_URL: ${DEEPQUEUE_PUBLIC_URL:?Set the HTTPS origin}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  queue-data:
+  codex-data:
+  caddy-data:
+  caddy-config:

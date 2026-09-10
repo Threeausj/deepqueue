@@ -1,0 +1,33 @@
+{
+  "name": "example-experiments",
+  "defaults": {
+    "server": "local",
+    "cwd": "/srv/my-project",
+    "context_files": ["train.py", "config.json"],
+    "intent": "Compare learning rates and batch sizes on one fixed dataset split. Save outputs separately."
+  },
+  "experiments": [
+    {
+      "key": "baseline",
+      "command": "python train.py --lr 0.001 --batch-size 16 --output runs/baseline",
+      "artifact_files": ["runs/baseline/metrics.json"]
+    },
+    {
+      "key": "lr-low",
+      "command": "python train.py --lr 0.0003 --batch-size 16 --output runs/lr-low",
+      "artifact_files": ["runs/lr-low/metrics.json"]
+    },
+    {
+      "key": "batch-large",
+      "command": "python train.py --lr 0.001 --batch-size 32 --output runs/batch-large",
+      "artifact_files": ["runs/batch-large/metrics.json"]
+    },
+    {
+      "key": "evaluate-baseline",
+      "command": "python evaluate.py --checkpoint runs/baseline/best.pth --output runs/evaluate-baseline",
+      "context_files": ["evaluate.py"],
+      "artifact_files": ["runs/evaluate-baseline/metrics.json"],
+      "depends_on": ["baseline"]
+    }
+  ]
+}

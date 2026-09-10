@@ -1,0 +1,39 @@
+{
+  "name": "learning-rate-sweep",
+  "defaults": {
+    "server": "local",
+    "cwd": "/srv/my-project",
+    "context_files": ["train.py", "config.json"],
+    "intent": "Compare learning rates, batch sizes, and seeds using one fixed train/validation split."
+  },
+  "matrix": {
+    "learning_rate": [0.001, 0.0003],
+    "batch_size": [16, 32],
+    "seed": [1, 2, 3]
+  },
+  "experiments": [
+    {
+      "key": "train-{index}",
+      "title": "Train lr={learning_rate} batch={batch_size} seed={seed}",
+      "argv": [
+        "python", "train.py",
+        "--lr", "{learning_rate}",
+        "--batch-size", "{batch_size}",
+        "--seed", "{seed}",
+        "--output", "runs/{batch}/{key}"
+      ],
+      "artifact_files": ["runs/{batch}/{key}/metrics.json"]
+    },
+    {
+      "key": "evaluate-{index}",
+      "argv": [
+        "python", "evaluate.py",
+        "--checkpoint", "runs/{batch}/train-{index}/best.pth",
+        "--output", "runs/{batch}/{key}"
+      ],
+      "context_files": ["evaluate.py"],
+      "artifact_files": ["runs/{batch}/{key}/metrics.json"],
+      "depends_on": ["train-{index}"]
+    }
+  ]
+}

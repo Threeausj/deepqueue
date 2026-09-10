@@ -1,0 +1,19 @@
+# Build context allowlist: never send credentials, queues, logs or local caches.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/deepqueue/
+!src/deepqueue/**
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/vite.config.js
+!frontend/src/
+!frontend/src/**
+**/__pycache__/
+**/*.pyc
+src/deepqueue/web_static/

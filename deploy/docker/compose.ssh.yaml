@@ -1,0 +1,11 @@
+# Optional read-only host keys. Use with the root compose.yaml; paths are relative
+# to the root Compose file. The container's service account has UID/GID 10001.
+services:
+  deepqueue:
+    volumes:
+      - type: bind
+        source: ${DEEPQUEUE_SSH_DIR:?Set an existing directory containing SSH keys}
+        target: /run/deepqueue-ssh
+        read_only: true
+        bind:
+          create_host_path: false
