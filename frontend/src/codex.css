@@ -548,3 +548,50 @@
 .codex-activity-collapse svg {
   transform: rotate(180deg);
 }
+
+.codex-executable {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.codex-executable-input {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+.codex-executable-input input {
+  flex: 1;
+  min-width: 0;
+}
+.codex-executable-input .button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.codex-executable small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.codex-executable p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.codex-executable-result {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff59;
+}
+.codex-executable-result select {
+  width: 100%;
+  min-width: 0;
+}
+.codex-executable-result code {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}

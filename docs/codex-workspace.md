@@ -25,7 +25,9 @@
 3. 在「Codex 工作区 → 连接设置」启用连接。填写默认项目的绝对路径。如果 SSH 环境找不到 Codex，填写可执行文件的绝对路径。
 4. Socket 默认 `auto`，表示该服务器上当前账户的共享 Codex socket。自定义地址同样是**目标服务器上的绝对路径**。点击「连接 Codex」连接已有服务；首次使用默认 socket 时可以点击「启动并连接」。
 
-通过 nvm 安装时，可执行文件例如 `/root/.nvm/versions/node/v24.14.1/bin/codex`。DeepQueue 会在启动共享服务、SSH 连接和归档回连时，将这个可执行文件所在的目录加入进程 `PATH`，使 npm 启动脚本能找到同目录的 `node`。不需要手动加载 `.zshrc`，也不要将路径替换成 npm 的 `lib/node_modules` 内部脚本。如果仍提示找不到 Node，在远端执行同目录的 `node --version`，确认该 Node 安装完整。
+连接设置中点击「自动查找」，可读取当前服务器账户的 `PATH`、npm 全局安装目录（`npm prefix --global`）、常见用户目录以及 nvm 的多个 Node 版本。下拉列表会展示 npm 启动入口、包内 `codex.js` 和匹配服务器架构的 npm 原生程序，附带包版本及 Node 路径。查找不会安装软件、启动 Codex 或保存配置；确认选择后点击「保存连接设置」应用。SSH 查找使用该服务器配置的 Python 执行只读脚本，读取远端账户的安装信息。
+
+通过 nvm 安装时，可执行文件例如 `/root/.nvm/versions/node/v24.14.1/bin/codex`。启动共享服务、SSH 连接和归档回连都会把对应 bin 目录加入进程 `PATH`。直接选择 npm 的 `lib/node_modules/@openai/codex/bin/codex.js` 也会补充同一 npm 安装前缀的 bin 目录，使其找到 Node。缺少 Node 时，查找会优先推荐同一安装内的可用原生程序；找不到入口或依赖时会显示原因。检测只检查文件和 Node 路径，不代表已经登录或 app-server 连接成功。
 
 Codex 0.153.4 的 `app-server daemon start` 还要求同一账户有官方安装器管理的独立版运行时。仅安装 npm 包可能返回 `managed standalone Codex install not found`；需要按 [官方安装说明](https://learn.chatgpt.com/docs/codex/cli)补齐独立版，其运行时位于 `~/.codex/packages/standalone/current/`。安装后可以保留网页中原来的 npm 可执行文件路径，登录和任务记录仍使用该账户的 Codex 数据目录。
 
@@ -46,6 +48,8 @@ Codex 0.153.4 的 `app-server daemon start` 还要求同一账户有官方安装
 本地保存配置（不启动调度或 Codex）：
 
 ```sh
+deepqueue --home /var/lib/deepqueue codex detect gpu-a
+deepqueue --home /var/lib/deepqueue codex detect gpu-a --executable /opt/node/bin/codex
 deepqueue --home /var/lib/deepqueue codex configure gpu-a --file codex.json
 ```
 
@@ -63,6 +67,7 @@ deepqueue --home /var/lib/deepqueue codex configure gpu-a --file codex.json
 通过已运行的公网网页网关控制连接与任务，使用管理员令牌。沿用 `deepqueue client configure` 或 `DEEPQUEUE_TOKEN` 设置，不把令牌写进命令历史或 skill。以下命令中用实际任务 ID 替换 `TASK_ID`：
 
 ```sh
+deepqueue --url https://queue.example.com codex detect gpu-a
 deepqueue --url https://queue.example.com codex connect gpu-a
 deepqueue --url https://queue.example.com codex connect gpu-a --start
 deepqueue --url https://queue.example.com codex projects gpu-a
@@ -94,6 +99,7 @@ deepqueue --url https://queue.example.com codex disconnect gpu-a
 | 方法 | 路径 | 行为 |
 | --- | --- | --- |
 | GET | `/`（不含结尾斜杠） | 连接状态、配置、待回复请求与 generation |
+| GET | `/executables?executable=codex` | 只读检测该服务器的 Codex 安装；返回 candidates、recommended 和 warnings，可在未连接/未启用时使用 |
 | POST | `/settings` | 保存 CodexConnection；断开旧连接 |
 | POST | `/connect` | 连接，`{"start":true}` 可先启动默认共享 daemon |
 | POST | `/disconnect` | 断开网关连接 |

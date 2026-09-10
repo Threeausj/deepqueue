@@ -174,6 +174,8 @@ def execute_remote(args, config):
         if action == "configure":
             data = CodexConnection.model_validate(json_file(args.file))
             return client.request(path + "/settings", data.model_dump())
+        if action == "detect":
+            return client.request(path + "/executables", executable=args.executable)
         if action == "status":
             return client.request(path)
         if action == "connect":

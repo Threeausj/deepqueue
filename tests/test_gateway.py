@@ -182,7 +182,13 @@ def test_gateway_requires_admin_and_same_origin_including_event_stream(db):
     scoped = access.create("Submit only", server="local")
     base = "/api/servers/local/codex"
     with TestClient(create_app(db.home), base_url="http://localhost") as client:
-        for path in (base, base + "/threads", base + "/projects", base + "/events"):
+        for path in (
+            base,
+            base + "/threads",
+            base + "/projects",
+            base + "/events",
+            base + "/executables",
+        ):
             assert client.get(path).status_code == 401
             assert (
                 client.get(path, headers={"Authorization": "Bearer " + scoped["token"]}).status_code

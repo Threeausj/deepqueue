@@ -4,23 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
-import posixpath
+import json
 import shlex
 import socket
 import subprocess
+from pathlib import Path
 
 from websockets.asyncio.client import connect
 
+from . import codex_discovery
+from .models import CodexConnection
 from .transport import Transport, read_channel
 
 
 def ssh_codex_command(args):
     command = "exec " + shlex.join(args)
-    if posixpath.isabs(args[0]):
-        # npm's launcher uses /usr/bin/env node. Keep the configured bin directory
-        # (not the symlink target) so nvm's sibling node is available over SSH.
-        directory = shlex.quote(posixpath.dirname(args[0]))
+    if directories := codex_discovery.command_directories(args[0]):
+        directory = shlex.quote(":".join(directories))
         command = f'PATH={directory}:"${{PATH:-/usr/local/bin:/usr/bin:/bin}}" {command}'
     return command
 
@@ -137,9 +137,7 @@ def start_daemon(home, server):
         raise ValueError("Start a custom socket using Codex on the target server first")
     args = [server.codex.executable, "app-server", "daemon", "start"]
     if server.kind == "local":
-        env = os.environ.copy()
-        if os.path.isabs(args[0]):
-            env["PATH"] = os.path.dirname(args[0]) + os.pathsep + (env.get("PATH") or os.defpath)
+        env = codex_discovery.command_environment(args[0])
         result = subprocess.run(args, capture_output=True, text=True, timeout=50, env=env)
         output, error, code = result.stdout, result.stderr, result.returncode
     else:
@@ -148,3 +146,28 @@ def start_daemon(home, server):
             output, error, code = read_channel(stdout.channel, timeout=50)
     if code:
         raise RuntimeError((error or output or f"Codex exited {code}")[-4000:])
+
+
+def discover_codex(home, server, executable=None):
+    """Inspect the selected server without connecting to or starting Codex."""
+    executable = CodexConnection(executable=executable or server.codex.executable).executable
+    if server.kind == "local":
+        result = codex_discovery.discover(executable)
+    else:
+        source = Path(codex_discovery.__file__).read_text()
+        command = shlex.join([server.python, "-c", source, executable])
+        with Transport(home, server).ssh() as client:
+            _, stdout, _ = client.exec_command(command, timeout=20)
+            try:
+                output, error, code = read_channel(stdout.channel, timeout=20)
+            finally:
+                stdout.channel.close()
+        if code:
+            raise RuntimeError((error or output or "无法读取服务器的 Codex 安装信息")[-2000:])
+        try:
+            result = json.loads(output)
+        except ValueError as exc:
+            raise RuntimeError(
+                "服务器未返回有效的 Codex 安装信息，请检查 SSH 启动脚本的额外输出。"
+            ) from exc
+    return {"server": server.name, **result}

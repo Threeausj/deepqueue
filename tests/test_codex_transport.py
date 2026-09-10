@@ -44,13 +44,18 @@ def node_install(tmp_path):
 
 
 @pytest.mark.parametrize("shell_name", ["sh", "zsh"])
+@pytest.mark.parametrize("entrypoint", ["link", "script"])
 def test_actual_ssh_start_and_proxy_find_sibling_node(
-    db, tmp_path, monkeypatch, node_install, shell_name
+    db, tmp_path, monkeypatch, node_install, shell_name, entrypoint
 ):
     shell = shutil.which(shell_name)
     if not shell:
         pytest.skip(f"{shell_name} is not installed")
     executable, minimal_path, calls = node_install
+    bin_dir = executable.parent
+    if entrypoint == "script":
+        executable = executable.resolve()
+    expected = [str(bin_dir)] if entrypoint == "link" else [str(executable.parent), str(bin_dir)]
     env = {**os.environ, "PATH": str(minimal_path)}
     before = subprocess.run([str(executable), "--version"], env=env, capture_output=True)
     assert before.returncode == 127 and b"node" in before.stderr
@@ -104,20 +109,23 @@ def test_actual_ssh_start_and_proxy_find_sibling_node(
         ["app-server", "daemon", "start"],
         ["app-server", "proxy", "--sock", socket_path],
     ]
-    assert all(
-        row["path"].split(":") == [str(executable.parent), str(minimal_path)] for row in records
-    )
+    assert all(row["path"].split(":") == [*expected, str(minimal_path)] for row in records)
     assert not (tmp_path / "INJECTED").exists()
 
 
+@pytest.mark.parametrize("entrypoint", ["link", "script"])
 def test_local_start_finds_sibling_node_without_changing_service_environment(
-    tmp_path, monkeypatch, node_install
+    tmp_path, monkeypatch, node_install, entrypoint
 ):
     executable, minimal_path, calls = node_install
+    bin_dir = executable.parent
+    if entrypoint == "script":
+        executable = executable.resolve()
+    expected = [str(bin_dir)] if entrypoint == "link" else [str(executable.parent), str(bin_dir)]
     monkeypatch.setenv("PATH", str(minimal_path))
     server = Server(name="local", codex=CodexConnection(executable=str(executable)))
     start_daemon(tmp_path, server)
     record = json.loads(calls.read_text())
     assert record["args"] == ["app-server", "daemon", "start"]
-    assert record["path"].split(":") == [str(executable.parent), str(minimal_path)]
+    assert record["path"].split(":") == [*expected, str(minimal_path)]
     assert os.environ["PATH"] == str(minimal_path)

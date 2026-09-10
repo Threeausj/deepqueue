@@ -18,7 +18,7 @@ from pydantic import Field
 
 from .access import COOKIE, Access
 from .agent import AppServer, AppServerError
-from .codex_transport import start_daemon
+from .codex_transport import discover_codex, start_daemon
 from .config import load_settings
 from .history_cache import HistoryCache
 from .models import CodexConnection, EffortId, Model, ModelId, Server
@@ -727,6 +727,18 @@ def router(gateway):
     @routes.get("")
     async def status(name: str):
         return (await gateway.session(name)).status()
+
+    @routes.get("/executables")
+    async def executables(
+        name: str, executable: str | None = Query(None, min_length=1, max_length=4096)
+    ):
+        session = await gateway.session(name)
+        try:
+            return await asyncio.to_thread(discover_codex, gateway.home, session.server, executable)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, str(exc)) from exc
 
     @routes.post("/settings")
     async def settings(name: str, data: CodexConnection):

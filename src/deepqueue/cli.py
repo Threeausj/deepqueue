@@ -253,6 +253,7 @@ def parser():
     )
     for action in (
         "configure",
+        "detect",
         "status",
         "connect",
         "disconnect",
@@ -273,6 +274,8 @@ def parser():
         command.add_argument("server")
         if action in ("configure", "reply"):
             command.add_argument("--file", required=True, help="JSON file, or - for stdin")
+        if action == "detect":
+            command.add_argument("--executable", help="Also inspect this Codex path on the server")
         if action == "connect":
             command.add_argument(
                 "--start", action="store_true", help="Start the shared Codex daemon"
@@ -553,6 +556,12 @@ def execute(args):
     if args.command == "models":
         return asyncio.run(model_catalog(settings))
     if args.command == "codex":
+        if args.action == "detect":
+            from .codex_transport import discover_codex
+
+            return discover_codex(
+                home, Server.model_validate(db.server(args.server)["config"]), args.executable
+            )
         if args.action == "configure":
             db.set_server_codex(args.server, CodexConnection.model_validate(json_file(args.file)))
             return db.server(args.server)["config"]["codex"]

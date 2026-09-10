@@ -48,6 +48,7 @@ import { conversationFile } from "./codexFiles.js";
 import { conversationBlocks } from "./codexActivity.js";
 import CodexTree from "./CodexTree.jsx";
 import CodexComposer from "./CodexComposer.jsx";
+import CodexExecutable from "./CodexExecutable.jsx";
 const WorkspacePanels = lazy(() => import("./WorkspacePanels.jsx"));
 import {
   cachedHistory,
@@ -1134,17 +1135,14 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
                 }
               />
             </label>
-            <label>
-              Codex 可执行文件
-              <input
-                required
-                value={settings.executable}
-                onChange={(event) =>
-                  setSettings({ ...settings, executable: event.target.value })
-                }
-              />
-              <small>SSH 环境找不到 codex 时，填写其绝对路径。</small>
-            </label>
+            <CodexExecutable
+              base={base}
+              value={settings.executable}
+              disabled={busy}
+              onChange={(executable) =>
+                setSettings((old) => ({ ...old, executable }))
+              }
+            />
             <label>
               服务器上的共享 Socket
               <input

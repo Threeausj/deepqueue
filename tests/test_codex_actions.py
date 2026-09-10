@@ -285,6 +285,12 @@ def test_codex_actions_remain_admin_only_and_require_same_origin(db):
     [
         (["permissions", "local", "--cwd", "/project"], "/permissions", None, {"cwd": "/project"}),
         (
+            ["detect", "local", "--executable", "/custom/bin/codex"],
+            "/executables",
+            None,
+            {"executable": "/custom/bin/codex"},
+        ),
+        (
             [
                 "access",
                 "local",
