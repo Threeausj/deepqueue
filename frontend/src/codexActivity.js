@@ -4,6 +4,7 @@ export function conversationBlocks(items = []) {
   for (const item of items || []) {
     const activity =
       item.type !== "userMessage" &&
+      item.type !== "contextCompaction" &&
       (item.type !== "agentMessage" || item.phase === "commentary");
     const previous = blocks.at(-1);
     if (activity && previous?.activity) previous.items.push(item);

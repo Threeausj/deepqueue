@@ -1,4 +1,29 @@
-# Verification: 2026-09-10
+# Verification: 2026-09-11
+
+## Long inputs and context telemetry — 2026-09-11
+
+- **40 backend checks** passed for context lifecycle, history refresh, gateway,
+  server isolation, access controls and workspace operations. **5 browser checks**
+  passed for long archive inputs, context counts, compaction, activity groups,
+  previews and conversation actions, including 390 px and 320 px layouts.
+- Long user inputs show six rendered lines, expand without truncating the source
+  content, retain manual expansion across thread refresh/events, and restore focus
+  when collapsed from the bottom. Desktop and mobile screenshots were reviewed.
+- Current usage follows `last.totalTokens`; cumulative usage is shown separately.
+  Unknown window sizes have no invented percentage. Native compaction lifecycle
+  events drive independent timeline records and running/completed/failed/interrupted
+  indicators; a later command failure does not mark a finished compaction failed.
+- A real isolated local **gpt-5.6-luna** task returned token usage, then completed
+  native compaction: **14,512 → 4,636 tokens**, with a reported window of **258,400**.
+  The gateway's refreshed history retained those statistics. The diagnostic task
+  was archived; no training jobs or existing task contents were changed.
+- This runtime does not replay usage when an old task is resumed. The initial UI
+  waits for the next usage notification; reconnect clears connection-local
+  telemetry. Opening another page on the same connection retains collected counts.
+- The local web process was updated on port **8765**, both existing Codex
+  connections were restored, and the scheduler retained the same owner process.
+- Frontend build, formatting, Ruff and whitespace checks passed. Evidence from
+  the native check is in `/tmp/deepqueue-context-luna-20260911-ofz5iu64/verification.json`.
 
 ## Optional password and remembered browser login — 2026-09-10
 

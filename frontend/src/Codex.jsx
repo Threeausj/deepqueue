@@ -48,6 +48,11 @@ import { conversationFile } from "./codexFiles.js";
 import { conversationBlocks } from "./codexActivity.js";
 import CodexTree from "./CodexTree.jsx";
 import CodexComposer from "./CodexComposer.jsx";
+import CodexUserMessage from "./CodexUserMessage.jsx";
+import CodexContext, {
+  CompactionRecord,
+  compactionStatus,
+} from "./CodexContext.jsx";
 import CodexExecutable from "./CodexExecutable.jsx";
 const WorkspacePanels = lazy(() => import("./WorkspacePanels.jsx"));
 import {
@@ -336,7 +341,8 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
       );
       if (
         (p.threadId || p.thread?.id) === currentThread.current &&
-        /^(thread|turn|item)\//.test(event.method)
+        (/^(thread|turn|item)\//.test(event.method) ||
+          event.method === "deepqueue/context")
       )
         eventVersion.current += 1;
       if (["deepqueue/status", "deepqueue/resync"].includes(event.method)) {
@@ -868,6 +874,12 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
                       turn={turn}
                       cwd={thread.cwd}
                       onFile={previewFile}
+                      compaction={
+                        thread.context?.compaction?.turnId === turn.id
+                          ? thread.context.compaction
+                          : null
+                      }
+                      live={ready && streaming}
                     />
                     {turn.error && (
                       <div className="notice error-text">
@@ -1028,6 +1040,7 @@ function Workspace({ server, servers, route, navigate, onSaved, navigation }) {
                     </button>
                   </div>
                 </div>
+                <CodexContext thread={thread} live={ready && streaming} />
                 <small className="codex-composer-hint">
                   <span>Enter 换行</span>
                   <span>
@@ -1428,10 +1441,22 @@ function TaskMenu({ children }) {
   );
 }
 
-const ConversationTurn = memo(function ConversationTurn({ turn, cwd, onFile }) {
+const ConversationTurn = memo(function ConversationTurn({
+  turn,
+  cwd,
+  onFile,
+  compaction,
+  live,
+}) {
   const blocks = useMemo(() => conversationBlocks(turn.items), [turn.items]);
   return blocks.map((block, index) =>
-    block.activity && block.items.length > 1 ? (
+    block.items[0].type === "contextCompaction" ? (
+      <CompactionRecord
+        key={block.id}
+        status={compactionStatus(turn, block.items[0], compaction)}
+        live={live}
+      />
+    ) : block.activity && block.items.length > 1 ? (
       <ActivityGroup
         key={block.id}
         items={block.items}
@@ -1559,23 +1584,7 @@ const ConversationItem = memo(function ConversationItem({ item, cwd, onFile }) {
     );
   };
   if (item.type === "userMessage")
-    return (
-      <article className="codex-message user">
-        <span className="codex-role">你</span>
-        <div>
-          {(item.content || []).map((part, index) => (
-            <p key={index}>
-              {part.text ||
-                (part.type === "image"
-                  ? "[图片]"
-                  : part.type === "skill"
-                    ? `$${part.name}`
-                    : `[${part.type}]`)}
-            </p>
-          ))}
-        </div>
-      </article>
-    );
+    return <CodexUserMessage content={item.content} />;
   if (item.type === "agentMessage")
     return (
       <article className="codex-message assistant">

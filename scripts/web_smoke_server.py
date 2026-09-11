@@ -8,6 +8,7 @@ from pathlib import Path
 
 import uvicorn
 from codex_activity_fixture import activity
+from codex_context_fixture import context_fixture
 from codex_fixture import CodexFixture
 from websockets.asyncio.server import unix_serve
 from workspace_fixture import add_workspace, preview_service
@@ -209,6 +210,11 @@ def workspace_fixture():
 @app.post("/api/fixture/activity")
 async def activity_fixture(action: str = "setup"):
     return await activity(fixture, home / "workspace-project", action)
+
+
+@app.post("/api/fixture/context")
+async def context_updates(action: str = "setup"):
+    return await context_fixture(fixture, home / "workspace-project", action)
 
 
 @app.post("/api/fixture/namespace-failure")

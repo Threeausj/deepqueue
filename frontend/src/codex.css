@@ -457,6 +457,68 @@
   }
 }
 
+/* Keep long input and archive callbacks readable without filling the chat. */
+.codex-message.user {
+  --codex-user-preview-lines: 6;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.codex-user-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.codex-message.user .codex-user-heading .codex-role {
+  margin-bottom: 0;
+}
+.codex-user-preview {
+  line-height: 1.8;
+  max-height: calc(var(--codex-user-preview-lines) * 1.8em);
+  overflow: hidden;
+}
+.codex-user-preview[data-expanded="true"] {
+  max-height: none;
+}
+.codex-user-preview[data-folded="true"] {
+  -webkit-mask-image: linear-gradient(#000 75%, transparent);
+  mask-image: linear-gradient(#000 75%, transparent);
+}
+.codex-user-content {
+  display: flow-root;
+}
+.codex-user-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: #ffffff66;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.codex-user-toggle:hover {
+  background: #ffffffa6;
+  color: var(--accent);
+}
+.codex-user-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.codex-user-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.codex-user-collapse {
+  display: flex;
+  margin: 10px 0 0 auto;
+}
+
 /* One compact disclosure for a contiguous stretch of work. */
 .codex-activity {
   min-width: 0;
@@ -594,4 +656,118 @@
 .codex-executable-result code {
   font-size: 10px;
   overflow-wrap: anywhere;
+}
+
+.codex-context-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.codex-context {
+  position: relative;
+  min-width: 0;
+}
+.codex-context > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  cursor: pointer;
+  list-style: none;
+}
+.codex-context > summary::-webkit-details-marker {
+  display: none;
+}
+.codex-context > summary:hover,
+.codex-context[open] > summary {
+  background: #ffffff85;
+  color: var(--text-secondary);
+}
+.codex-context > summary[data-level="high"] {
+  color: #a36520;
+}
+.codex-context-value {
+  font-variant-numeric: tabular-nums;
+}
+.codex-context-detail {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(300px, calc(100vw - 100px));
+  max-height: min(360px, 50dvh);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 18px;
+  background: #f6f9fff5;
+  box-shadow:
+    0 10px 35px #34497824,
+    inset 0 1px 0 #fff;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.codex-context-detail > strong {
+  font-size: 12px;
+}
+.codex-context-detail dl {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0;
+}
+.codex-context-detail dl > div {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.codex-context-detail dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.codex-context-detail p {
+  color: var(--muted);
+}
+.codex-context-meter {
+  height: 5px;
+  overflow: hidden;
+  margin-top: 12px;
+  border-radius: 10px;
+  background: var(--line);
+}
+.codex-context-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.codex-context-state,
+.codex-compaction {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.codex-compaction {
+  margin: 18px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff59;
+  color: var(--muted);
+  font-size: 11px;
+}
+.codex-compaction[data-state="inProgress"],
+.codex-context-state[data-state="inProgress"] {
+  color: var(--accent);
+}
+.codex-compaction[data-state="failed"],
+.codex-context-state[data-state="failed"] {
+  color: #b44b4b;
 }

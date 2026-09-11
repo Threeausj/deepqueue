@@ -20,6 +20,7 @@ from .access import COOKIE, Access
 from .agent import AppServer, AppServerError
 from .codex_transport import discover_codex, start_daemon
 from .config import load_settings
+from .context_usage import ContextUsage
 from .history_cache import HistoryCache
 from .models import CodexConnection, EffortId, Model, ModelId, Server
 from .preview import PreviewManager, PreviewReference, PreviewTarget, credential
@@ -129,6 +130,7 @@ class Session:
         self.fresh_threads = {}
         self.generation = None
         self.history = HistoryCache()
+        self.context_usage = ContextUsage()
         self.history_pending = {}
         self.history_versions = {}
         self.loaded_threads = set()
@@ -175,6 +177,7 @@ class Session:
             self.directory.cleanup()
             self.directory = None
         self.pending.clear()
+        self.context_usage.clear()
         self.fresh_threads.clear()
         self.thread_settings.clear()
         for future in self.settings_waiters.values():
@@ -242,6 +245,14 @@ class Session:
             message = await self.client.notifications.get()
             method, params = message.get("method"), message.get("params", {})
             self.tools.event(method, params)
+            context = self.context_usage.event(method, params)
+            if context is not None:
+                self.publish(
+                    {
+                        "method": "deepqueue/context",
+                        "params": {"threadId": params["threadId"], "context": context},
+                    }
+                )
             thread_id = params.get("threadId") or params.get("thread", {}).get("id")
             if thread_id:
                 self.invalidate_history(thread_id)
@@ -577,6 +588,7 @@ class Session:
             {
                 **result["thread"],
                 **self.thread_settings.get(thread_id, {}),
+                "context": self.context_usage.get(thread_id),
             },
             limit,
         )

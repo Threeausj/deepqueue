@@ -4,6 +4,8 @@ export function applyCodexEvent(thread, event) {
   const p = event.params || {};
   const id = p.threadId || p.thread?.id;
   if (id !== thread.id) return thread;
+  if (event.method === "deepqueue/context")
+    return { ...thread, context: p.context };
   if (event.method === "thread/status/changed")
     return { ...thread, status: p.status };
   if (event.method === "thread/name/updated")
